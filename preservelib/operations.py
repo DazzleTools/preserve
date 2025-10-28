@@ -12,9 +12,9 @@ import shutil
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Union, Set, Tuple
 
-# Import from filetoolkit if available, otherwise use local imports
+# Import from dazzle_filekit if available, otherwise use local imports
 try:
-    from filetoolkit import paths, operations, verification
+    from dazzle_filekit import paths, operations, verification
 except ImportError:
     # Local imports for development/testing
     from pathlib import Path
@@ -22,7 +22,7 @@ except ImportError:
 
     sys.path.append(str(Path(__file__).parent.parent.parent))
     try:
-        from filetoolkit import paths, operations, verification
+        from dazzle_filekit import paths, operations, verification
     except ImportError:
         # Fallbacks for testing
         paths = None

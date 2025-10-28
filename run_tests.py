@@ -90,7 +90,7 @@ def run_with_coverage(test_pattern="test_*.py", test_dir="tests"):
 
     # Initialize coverage
     cov = coverage.Coverage(
-        source=["preserve", "preservelib", "filetoolkit"],
+        source=["preserve", "preservelib", "dazzle_filekit"],
         omit=[
             "*/tests/*",
             "*/test_*.py",
