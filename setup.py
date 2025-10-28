@@ -28,6 +28,7 @@ setup(
         # Base requirements
         "pathlib",
         "colorama>=0.4.0",  # For colored terminal output
+        "filetoolkit>=0.1.0",  # File operations library
     ],
     extras_require={
         "dazzlelink": ["dazzlelink>=0.5.0"],

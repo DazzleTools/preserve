@@ -142,6 +142,7 @@ credentials.json
 **/__private__*
 /revisions/
 /test-runs/
+/MagicMock/
 
 .claude/
 tests/audits/
