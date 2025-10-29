@@ -33,19 +33,24 @@ Enter `preserve`...
 ## Installation
 
 ```bash
-pip install preserve
+pip install dazzle-preserve
+```
+
+**Note**: The PyPI package is named `dazzle-preserve`, but you still import and use it as `preserve`:
+```python
+import preserve  # Import name stays the same
 ```
 
 For full functionality on Windows, install with the Windows extras:
 
 ```bash
-pip install preserve[windows]
+pip install dazzle-preserve[windows]
 ```
 
 For [dazzlelink](https://github.com/djdarcy/dazzlelink) integration:
 
 ```bash
-pip install preserve[dazzlelink]
+pip install dazzle-preserve[dazzlelink]
 ```
 
 ## Usage

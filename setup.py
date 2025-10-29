@@ -6,23 +6,23 @@ import os
 from setuptools import setup, find_packages
 
 # Get the long description from the README file
-with open(os.path.join(os.path.dirname(__file__), 'README.md'), encoding='utf-8') as f:
+with open(os.path.join(os.path.dirname(__file__), "README.md"), encoding="utf-8") as f:
     long_description = f.read()
 
 # Read version from version.py
-version_file = os.path.join(os.path.dirname(__file__), 'preserve', 'version.py')
+version_file = os.path.join(os.path.dirname(__file__), "preserve", "version.py")
 with open(version_file) as f:
     exec(f.read())
 
 setup(
-    name="preserve",
-    version=get_pip_version() if 'get_pip_version' in locals() else "0.4.0",
+    name="dazzle-preserve",
+    version=get_pip_version() if "get_pip_version" in locals() else "0.4.0",
     description="A tool for preserving files with path normalization and verification",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    author="Your Name",
-    author_email="your.email@example.com",
-    url="https://github.com/username/preserve",
+    author="Dustin Darcy",
+    author_email="6962246+djdarcy@users.noreply.github.com",
+    url="https://github.com/djdarcy/preserve",
     packages=find_packages(),
     install_requires=[
         # Base requirements
@@ -39,7 +39,7 @@ setup(
             "black",
             "flake8",
         ],
-        "all": ["dazzlelink>=0.5.0", "pywin32;platform_system=='Windows'"]
+        "all": ["dazzlelink>=0.5.0", "pywin32;platform_system=='Windows'"],
     },
     classifiers=[
         "Development Status :: 3 - Alpha",
@@ -53,6 +53,8 @@ setup(
         "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
         "Operating System :: OS Independent",
         "Topic :: System :: Archiving :: Backup",
         "Topic :: Utilities",
