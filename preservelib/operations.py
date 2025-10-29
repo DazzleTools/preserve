@@ -664,9 +664,10 @@ def copy_operation(
                                 # Windows: use drive letter as directory
                                 drive, path = os.path.splitdrive(str(source_path))
                                 drive = drive.rstrip(":")  # Remove colon
-                                dest_path = dest_base_path / drive / path.lstrip("\\/")
+                                stripped_path = path.lstrip("\\/")
+                                dest_path = dest_base_path / drive / stripped_path
                                 logger.debug(
-                                    f"[DEBUG PATH] Strategy 4 - Windows absolute path fallback: {drive}/{path.lstrip('\\/')} → {dest_path}"
+                                    f"[DEBUG PATH] Strategy 4 - Windows absolute path fallback: {drive}/{stripped_path} → {dest_path}"
                                 )
                             else:
                                 # Unix: use root-relative path
