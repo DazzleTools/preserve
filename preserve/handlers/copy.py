@@ -17,6 +17,7 @@ import logging
 from pathlib import Path
 
 from preservelib import operations
+from preservelib.operations import InsufficientSpaceError, PermissionCheckError
 from preserve.utils import (
     find_files_from_args,
     get_hash_algorithms,
@@ -259,13 +260,27 @@ def handle_copy_operation(args, logger):
     command_line = f"preserve COPY {' '.join(sys.argv[2:])}"
 
     # Perform copy operation
-    result = operations.copy_operation(
-        source_files=source_files,
-        dest_base=dest_path,
-        manifest_path=manifest_path,
-        options=options,
-        command_line=command_line
-    )
+    try:
+        result = operations.copy_operation(
+            source_files=source_files,
+            dest_base=dest_path,
+            manifest_path=manifest_path,
+            options=options,
+            command_line=command_line
+        )
+    except InsufficientSpaceError as e:
+        print("")
+        print("=" * 60)
+        print("ERROR: Insufficient disk space")
+        print("=" * 60)
+        print(f"  Destination: {e.destination}")
+        print(f"  Required:    {e.required:,} bytes ({e.required / (1024**3):.2f} GB)")
+        print(f"  Available:   {e.available:,} bytes ({e.available / (1024**3):.2f} GB)")
+        print(f"  Shortfall:   {(e.required - e.available):,} bytes")
+        print("")
+        print("No files were copied. Free up space or use a different destination.")
+        print("=" * 60)
+        return 1
 
     # Print summary
     print("\nCOPY Operation Summary:")

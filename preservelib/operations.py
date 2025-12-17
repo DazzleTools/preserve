@@ -36,6 +36,274 @@ from .metadata import collect_file_metadata, apply_file_metadata
 logger = logging.getLogger(__name__)
 
 
+class InsufficientSpaceError(Exception):
+    """Raised when destination doesn't have enough disk space."""
+
+    def __init__(self, required: int, available: int, destination: str):
+        self.required = required
+        self.available = available
+        self.destination = destination
+        super().__init__(
+            f"Insufficient disk space at '{destination}': "
+            f"need {_format_size(required)}, only {_format_size(available)} available"
+        )
+
+
+class PermissionCheckError(Exception):
+    """Raised when permission check fails before operation."""
+
+    def __init__(self, path: str, operation: str, details: str, is_admin_required: bool = False):
+        self.path = path
+        self.operation = operation
+        self.details = details
+        self.is_admin_required = is_admin_required
+        super().__init__(
+            f"Permission denied for {operation} at '{path}': {details}"
+        )
+
+
+def _format_size(size_bytes: int) -> str:
+    """Format bytes to human-readable string."""
+    if size_bytes < 1024:
+        return f"{size_bytes} bytes"
+    elif size_bytes < 1024 * 1024:
+        return f"{size_bytes / 1024:.1f} KB"
+    elif size_bytes < 1024 * 1024 * 1024:
+        return f"{size_bytes / (1024 * 1024):.1f} MB"
+    elif size_bytes < 1024 * 1024 * 1024 * 1024:
+        return f"{size_bytes / (1024 * 1024 * 1024):.2f} GB"
+    else:
+        return f"{size_bytes / (1024 * 1024 * 1024 * 1024):.2f} TB"
+
+
+def calculate_total_size(source_files: List[Union[str, Path]]) -> int:
+    """
+    Calculate total size of source files.
+
+    Args:
+        source_files: List of source file paths
+
+    Returns:
+        Total size in bytes
+    """
+    total = 0
+    for file_path in source_files:
+        try:
+            path = Path(file_path)
+            if path.exists() and path.is_file():
+                total += path.stat().st_size
+        except (OSError, IOError) as e:
+            logger.debug(f"Could not get size of {file_path}: {e}")
+    return total
+
+
+def check_disk_space(
+    dest_path: Union[str, Path],
+    required_bytes: int,
+    safety_margin: float = 0.1
+) -> Tuple[bool, int, int, str]:
+    """
+    Check if destination has enough disk space.
+
+    Args:
+        dest_path: Destination path (will use drive/mount point)
+        required_bytes: Bytes needed for the operation
+        safety_margin: Additional margin (default 10%)
+
+    Returns:
+        Tuple of (has_space, required_with_margin, available, message)
+    """
+    dest_path = Path(dest_path)
+
+    # Find the actual mount point / drive
+    # Walk up until we find an existing path
+    check_path = dest_path
+    while not check_path.exists():
+        parent = check_path.parent
+        if parent == check_path:  # Reached root
+            break
+        check_path = parent
+
+    try:
+        usage = shutil.disk_usage(str(check_path))
+        available = usage.free
+
+        # Add safety margin
+        required_with_margin = int(required_bytes * (1 + safety_margin))
+
+        if available >= required_with_margin:
+            return (
+                True,
+                required_with_margin,
+                available,
+                f"OK: {_format_size(available)} available, {_format_size(required_with_margin)} needed"
+            )
+        else:
+            shortfall = required_with_margin - available
+            return (
+                False,
+                required_with_margin,
+                available,
+                f"INSUFFICIENT: need {_format_size(required_with_margin)} "
+                f"(including {int(safety_margin*100)}% margin), "
+                f"only {_format_size(available)} available "
+                f"(short by {_format_size(shortfall)})"
+            )
+    except (OSError, IOError) as e:
+        logger.warning(f"Could not check disk space at {check_path}: {e}")
+        # Return True with warning - don't block operation if we can't check
+        return (
+            True,
+            required_bytes,
+            0,
+            f"WARNING: Could not determine available space: {e}"
+        )
+
+
+def check_write_permission(dest_path: Union[str, Path]) -> Tuple[bool, str]:
+    """
+    Check if we have write permission at the destination.
+
+    Creates a temporary test file to verify actual write capability.
+
+    Args:
+        dest_path: Destination path to check
+
+    Returns:
+        Tuple of (has_permission, message)
+    """
+    import uuid
+    import tempfile
+
+    dest_path = Path(dest_path)
+
+    # Find existing parent directory
+    check_path = dest_path
+    while not check_path.exists():
+        parent = check_path.parent
+        if parent == check_path:
+            break
+        check_path = parent
+
+    if not check_path.exists():
+        return False, f"Destination path does not exist and cannot be created: {dest_path}"
+
+    # Try to create a test file
+    test_filename = f".preserve_permission_test_{uuid.uuid4().hex[:8]}"
+    test_path = check_path / test_filename
+
+    try:
+        # Try to create and write to test file
+        test_path.write_text("permission test")
+        test_path.unlink()  # Clean up
+        return True, f"Write permission verified at {check_path}"
+
+    except PermissionError as e:
+        # Check if this is likely an admin-required situation
+        is_admin_hint = ""
+        if sys.platform == 'win32':
+            if 'access' in str(e).lower() or e.errno == 5:
+                is_admin_hint = " Try running as Administrator."
+
+        return False, f"Cannot write to {check_path}: {e}{is_admin_hint}"
+
+    except OSError as e:
+        return False, f"Cannot write to {check_path}: {e}"
+
+    finally:
+        # Ensure cleanup even on partial failure
+        try:
+            if test_path.exists():
+                test_path.unlink()
+        except Exception:
+            pass
+
+
+def check_source_permissions(source_files: List[Union[str, Path]], check_delete: bool = False) -> Tuple[bool, List[str]]:
+    """
+    Check read permissions on source files, and optionally delete permissions.
+
+    Args:
+        source_files: List of source file paths
+        check_delete: If True, also check if files can be deleted (for MOVE)
+
+    Returns:
+        Tuple of (all_ok, list of error messages)
+    """
+    errors = []
+
+    for file_path in source_files:
+        path = Path(file_path)
+
+        if not path.exists():
+            errors.append(f"Source file not found: {file_path}")
+            continue
+
+        # Check read permission
+        if not os.access(path, os.R_OK):
+            errors.append(f"Cannot read: {file_path}")
+            continue
+
+        # For MOVE operations, check if we can delete
+        if check_delete:
+            # Check write permission on parent directory (needed for deletion)
+            if not os.access(path.parent, os.W_OK):
+                errors.append(f"Cannot delete (no write permission on parent): {file_path}")
+
+    return len(errors) == 0, errors
+
+
+def preflight_checks(
+    source_files: List[Union[str, Path]],
+    dest_path: Union[str, Path],
+    operation: str = "COPY",
+    check_space: bool = True,
+    check_permissions: bool = True,
+    space_safety_margin: float = 0.1
+) -> Tuple[bool, List[str]]:
+    """
+    Perform pre-flight checks before an operation.
+
+    For MOVE operations, this is critical - we check EVERYTHING before
+    moving any files to avoid partial operations.
+
+    Args:
+        source_files: List of source file paths
+        dest_path: Destination base path
+        operation: "COPY" or "MOVE"
+        check_space: Whether to check disk space
+        check_permissions: Whether to check permissions
+        space_safety_margin: Safety margin for space check
+
+    Returns:
+        Tuple of (all_checks_passed, list of issues)
+    """
+    issues = []
+    is_move = operation.upper() == "MOVE"
+
+    # Check destination write permission
+    if check_permissions:
+        has_perm, perm_msg = check_write_permission(dest_path)
+        if not has_perm:
+            issues.append(f"Destination: {perm_msg}")
+
+    # Check source permissions
+    if check_permissions:
+        src_ok, src_errors = check_source_permissions(source_files, check_delete=is_move)
+        issues.extend(src_errors)
+
+    # Check disk space
+    if check_space and source_files:
+        total_size = calculate_total_size(source_files)
+        has_space, required, available, space_msg = check_disk_space(
+            dest_path, total_size, safety_margin=space_safety_margin
+        )
+        if not has_space:
+            issues.append(f"Disk space: {space_msg}")
+
+    return len(issues) == 0, issues
+
+
 class OperationResult:
     """
     Result of a preserve operation.
@@ -230,6 +498,9 @@ def copy_operation(
         "dazzlelink_dir": None,
         "dazzlelink_mode": "info",  # Default execution mode for dazzlelinks
         "dry_run": False,
+        "check_space": True,  # Pre-flight disk space check
+        "check_permissions": True,  # Pre-flight permission check
+        "space_safety_margin": 0.1,  # 10% safety margin
     }
 
     # Merge with provided options
@@ -240,6 +511,41 @@ def copy_operation(
 
     # Initialize operation result
     result = OperationResult("COPY", command_line)
+
+    # Pre-flight checks (space and permissions)
+    if (options["check_space"] or options["check_permissions"]) and source_files:
+        checks_ok, issues = preflight_checks(
+            source_files=source_files,
+            dest_path=dest_base,
+            operation="COPY",
+            check_space=options["check_space"],
+            check_permissions=options["check_permissions"],
+            space_safety_margin=options["space_safety_margin"]
+        )
+
+        if options["dry_run"]:
+            if issues:
+                logger.info(f"[DRY RUN] Pre-flight issues found: {len(issues)}")
+                for issue in issues:
+                    logger.info(f"  - {issue}")
+            else:
+                logger.info("[DRY RUN] All pre-flight checks passed")
+        elif not checks_ok:
+            # For COPY, log warnings but continue (files are not deleted)
+            logger.warning(f"Pre-flight check warnings ({len(issues)}):")
+            for issue in issues:
+                logger.warning(f"  - {issue}")
+            # Check for critical issues (insufficient space)
+            for issue in issues:
+                if "Disk space: INSUFFICIENT" in issue:
+                    # Extract details and raise
+                    total_size = calculate_total_size(source_files)
+                    _, required, available, _ = check_disk_space(
+                        dest_base, total_size, safety_margin=options["space_safety_margin"]
+                    )
+                    raise InsufficientSpaceError(required, available, str(dest_base))
+        else:
+            logger.info("All pre-flight checks passed")
 
     # Create manifest
     manifest = PreserveManifest()
@@ -961,6 +1267,9 @@ def move_operation(
         "dazzlelink_mode": "info",  # Default execution mode for dazzlelinks
         "dry_run": False,
         "force": False,  # Force removal even if verification fails
+        "check_space": True,  # Pre-flight disk space check
+        "check_permissions": True,  # Pre-flight permission check
+        "space_safety_margin": 0.1,  # 10% safety margin
     }
 
     # Merge with provided options
@@ -971,6 +1280,55 @@ def move_operation(
 
     # Initialize operation result
     result = OperationResult("MOVE", command_line)
+
+    # CRITICAL: Pre-flight checks for MOVE are MANDATORY
+    # For destructive MOVE operations, ALL checks must pass before we move ANY files
+    if (options["check_space"] or options["check_permissions"]) and source_files:
+        checks_ok, issues = preflight_checks(
+            source_files=source_files,
+            dest_path=dest_base,
+            operation="MOVE",  # This enables delete permission checks
+            check_space=options["check_space"],
+            check_permissions=options["check_permissions"],
+            space_safety_margin=options["space_safety_margin"]
+        )
+
+        if options["dry_run"]:
+            if issues:
+                logger.info(f"[DRY RUN] Pre-flight issues found: {len(issues)}")
+                for issue in issues:
+                    logger.info(f"  - {issue}")
+            else:
+                logger.info("[DRY RUN] All pre-flight checks passed")
+        elif not checks_ok:
+            # MOVE is destructive - we FAIL if ANY check fails
+            logger.error(f"Pre-flight checks FAILED for MOVE operation ({len(issues)} issues):")
+            for issue in issues:
+                logger.error(f"  - {issue}")
+
+            # Determine the primary error type and raise appropriate exception
+            for issue in issues:
+                if "Disk space: INSUFFICIENT" in issue:
+                    total_size = calculate_total_size(source_files)
+                    _, required, available, _ = check_disk_space(
+                        dest_base, total_size, safety_margin=options["space_safety_margin"]
+                    )
+                    raise InsufficientSpaceError(required, available, str(dest_base))
+
+            # If it's a permission issue, raise PermissionCheckError
+            perm_issues = [i for i in issues if "Cannot" in i or "Permission" in i.lower()]
+            if perm_issues:
+                raise PermissionCheckError(
+                    path=str(dest_base),
+                    operation="MOVE",
+                    details="; ".join(perm_issues),
+                    is_admin_required="Administrator" in str(perm_issues)
+                )
+
+            # Generic failure - shouldn't happen but be safe
+            raise RuntimeError(f"Pre-flight checks failed: {'; '.join(issues)}")
+        else:
+            logger.info("All pre-flight checks passed for MOVE operation")
 
     # Create manifest
     manifest = PreserveManifest()

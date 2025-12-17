@@ -6,6 +6,16 @@ All notable changes to this project will be documented in this file. This projec
 
 ## [Unreleased]
 
+## [0.6.1] - 2025-12-17
+
+### Added
+- **Pre-flight disk space checking** (#40)
+  - Validates destination has sufficient space before MOVE/COPY operations
+  - Prevents partial transfers due to disk full errors
+- **Permission error handling** (#41)
+  - Tests write permissions before destructive MOVE operations
+  - Clear error messages with remediation suggestions
+
 ## [0.6.0] - 2025-12-16
 
 ### Added

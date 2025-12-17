@@ -20,6 +20,7 @@ from pathlib import Path
 
 from preservelib import operations
 from preservelib import links
+from preservelib.operations import InsufficientSpaceError, PermissionCheckError
 from preserve.utils import (
     find_files_from_args,
     get_hash_algorithms,
@@ -158,13 +159,45 @@ def handle_move_operation(args, logger):
     command_line = f"preserve MOVE {' '.join(sys.argv[2:])}"
 
     # Perform move operation
-    result = operations.move_operation(
-        source_files=source_files,
-        dest_base=dest_path,
-        manifest_path=manifest_path,
-        options=options,
-        command_line=command_line
-    )
+    try:
+        result = operations.move_operation(
+            source_files=source_files,
+            dest_base=dest_path,
+            manifest_path=manifest_path,
+            options=options,
+            command_line=command_line
+        )
+    except InsufficientSpaceError as e:
+        print("")
+        print("=" * 60)
+        print("ERROR: Insufficient disk space")
+        print("=" * 60)
+        print(f"  Destination: {e.destination}")
+        print(f"  Required:    {e.required:,} bytes ({e.required / (1024**3):.2f} GB)")
+        print(f"  Available:   {e.available:,} bytes ({e.available / (1024**3):.2f} GB)")
+        print(f"  Shortfall:   {(e.required - e.available):,} bytes")
+        print("")
+        print("No files were moved. Free up space or use a different destination.")
+        print("=" * 60)
+        return 1
+    except PermissionCheckError as e:
+        print("")
+        print("=" * 60)
+        print("ERROR: Permission denied")
+        print("=" * 60)
+        print(f"  Operation: {e.operation}")
+        print(f"  Path:      {e.path}")
+        print(f"  Details:   {e.details}")
+        print("")
+        if e.is_admin_required:
+            print("This operation may require administrator privileges.")
+            print("Try running as Administrator.")
+        else:
+            print("Check file/folder permissions and try again.")
+        print("")
+        print("No files were moved. Resolve permission issues first.")
+        print("=" * 60)
+        return 1
 
     # Print summary
     print("\nMOVE Operation Summary:")
