@@ -125,9 +125,13 @@ Note: When copying directories, --recursive (-r) is required to include files in
 4. Move specific file types with pattern:
    preserve MOVE --glob "*.docx" --srchPath "C:\\old" --recursive --rel --dst "D:\\new-location"
 
+5. Move and create junction so apps still find files at original path:
+   preserve MOVE "C:\\cache\\hub" -r --abs --dst "E:\\cache" -L junction
+
 Note: When moving directories, --recursive (-r) is required to include files in subdirectories.
       Most users also want --includeBase to preserve the source directory name.
-      Files are only deleted from source after successful verification.''',
+      Files are only deleted from source after successful verification.
+      Use --create-link (-L) to create a link from source to destination after move.''',
                                        formatter_class=argparse.RawDescriptionHelpFormatter)
     _add_source_args(move_parser)
     _add_destination_args(move_parser)
@@ -140,6 +144,7 @@ Note: When moving directories, --recursive (-r) is required to include files in 
                             help='Overwrite existing files in destination')
     move_parser.add_argument('--force', action='store_true',
                             help='Force removal of source files even if verification fails')
+    _add_link_args(move_parser)
 
     # === VERIFY operation ===
     verify_parser = subparsers.add_parser('VERIFY',
@@ -341,6 +346,19 @@ def _add_dazzlelink_args(parser):
                        help='Use dazzlelinks for verification if no manifest is found')
     parser.add_argument('--no-dazzlelinks', action='store_true',
                        help='Do not use dazzlelinks for verification')
+
+
+def _add_link_args(parser):
+    """Add link creation arguments to a parser (for MOVE operation)"""
+    link_group = parser.add_argument_group('Link creation options')
+    link_group.add_argument('--create-link', '-L',
+                           choices=['junction', 'soft', 'hard', 'auto'],
+                           metavar='TYPE',
+                           help='Create link from source to destination after move. '
+                                'Types: junction (Windows NTFS), soft (symlink), hard (same FS), '
+                                'auto (platform default)')
+    link_group.add_argument('--link-force', action='store_true',
+                           help='Force link creation even if source path still has content')
 
 
 def display_help_with_examples(parser, args):

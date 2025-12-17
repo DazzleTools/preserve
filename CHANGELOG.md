@@ -6,6 +6,31 @@ All notable changes to this project will be documented in this file. This projec
 
 ## [Unreleased]
 
+## [0.6.0] - 2025-12-16
+
+### Added
+- **Link Creation on MOVE** (`--create-link` / `-L`)
+  - Create filesystem links from source to destination after move
+  - Supported link types: `junction` (Windows NTFS), `soft` (symlink), `hard`, `auto`
+  - Enables moving large directories (e.g., model caches) while maintaining app compatibility
+  - Example: `preserve MOVE "C:\cache\hub" -r --abs --dst "E:\cache" -L junction`
+- **Link-aware RESTORE**
+  - Automatically detects links at restore destinations
+  - Tracks links created by preserve in manifest (`link_result` field)
+  - Safely removes links before restoring files
+  - Shows clear warnings for untracked links
+- **New module `preservelib/links.py`**
+  - Cross-platform link detection, creation, and removal
+  - Functions: `create_link()`, `remove_link()`, `is_link()`, `detect_link_type()`, `verify_link()`
+- **Unit tests for link functionality** (`tests/test_create_link.py`)
+  - 20 tests covering junction, symlink, hard link operations
+  - CLI argument parsing tests
+
+### Changed
+- Manifest schema extended with optional `link_result` field (backward compatible, no version bump)
+- MOVE handler now supports link creation after successful file transfer
+- RESTORE handler checks for and handles links before restoration
+
 ## [0.5.2] - 2025-09-21
 
 ### Fixed

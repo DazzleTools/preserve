@@ -17,6 +17,7 @@ import logging
 from pathlib import Path
 
 from preservelib import operations
+from preservelib import links
 from preservelib.manifest import PreserveManifest, find_available_manifests
 from preserve.utils import get_hash_algorithms, get_effective_verbosity
 from preserve.output import configure_formatter, VerbosityLevel
@@ -260,6 +261,64 @@ def handle_restore_operation(args, logger):
         except Exception as e:
             logger.warning(f"Could not perform three-way verification: {e}")
             print(f"\nWarning: Three-way verification failed: {e}")
+
+    # Check for links at source locations that need to be removed before restore
+    if manifest_path:
+        try:
+            manifest_for_links = PreserveManifest(manifest_path)
+            link_info = links.check_for_links_at_sources(manifest_for_links, source_path)
+
+            if link_info['has_links']:
+                print("\n" + "="*60)
+                print("LINKS DETECTED AT RESTORE DESTINATION")
+                print("="*60)
+
+                for link_data in link_info['links']:
+                    link_type = link_data.get('type', 'unknown')
+                    link_path = link_data.get('path', 'unknown')
+                    target = link_data.get('target', 'unknown')
+                    tracked = link_data.get('tracked', False)
+
+                    print(f"\n  Type:    {link_type}")
+                    print(f"  Path:    {link_path}")
+                    print(f"  Target:  {target}")
+                    if tracked:
+                        print(f"  Status:  Tracked (created by preserve)")
+                    else:
+                        print(f"  Status:  UNTRACKED - may have been created manually")
+
+                print("\n" + "-"*60)
+                print("These links must be removed before files can be restored.")
+                print("Removing a link does NOT delete the target content.")
+                print("-"*60)
+
+                if not options['force'] and not options['dry_run']:
+                    response = input("\nRemove links and proceed with restore? [y/N]: ").strip().lower()
+                    if response != 'y':
+                        print("Restore cancelled.")
+                        return 1
+
+                # Remove the links
+                for link_data in link_info['links']:
+                    link_path = link_data.get('path')
+                    if link_path:
+                        if options['dry_run']:
+                            print(f"\n[DRY RUN] Would remove link: {link_path}")
+                        else:
+                            print(f"\nRemoving link: {link_path}")
+                            success, error = links.remove_link(link_path)
+                            if success:
+                                print(f"  Link removed successfully")
+                            else:
+                                print(f"  ERROR: Failed to remove link: {error}")
+                                if not options['force']:
+                                    print("  Use --force to continue anyway")
+                                    return 1
+
+        except Exception as e:
+            logger.warning(f"Error checking for links: {e}")
+            if verbosity >= VerbosityLevel.VERBOSE:
+                print(f"\nWarning: Could not check for links at restore destination: {e}")
 
     # Perform restoration
     result = operations.restore_operation(

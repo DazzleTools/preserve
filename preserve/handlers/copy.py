@@ -24,6 +24,7 @@ from preserve.utils import (
     get_preserve_dir,
     get_manifest_path,
     get_dazzlelink_dir,
+    format_bytes_detailed,
     _show_directory_help_message,
     HAVE_DAZZLELINK
 )
@@ -57,6 +58,23 @@ def handle_copy_operation(args, logger):
                 logger.warning(f"WARNING: Source path has a trailing backslash: '{src}'")
                 logger.warning("         This can cause issues on Windows command line.")
                 logger.warning("         Consider removing it: '{}'".format(src[:-1]))
+
+    # Check for common issue: trailing backslash in destination path on Windows
+    if hasattr(args, 'dst') and args.dst and sys.platform == 'win32':
+        dst = args.dst
+        # Check if the destination path looks like it captured subsequent arguments
+        if '--' in dst or dst.count(' ') > 2:
+            logger.error("")
+            logger.error("ERROR: It appears the destination path may have captured command-line arguments.")
+            logger.error(f"       Received: '{dst}'")
+            logger.error("")
+            logger.error("Problem: The trailing backslash escapes the closing quote.")
+            logger.error("  Example: --dst \"E:\\\" <- The \\ escapes the \"")
+            logger.error("")
+            logger.error("Solution: Remove the trailing backslash from the destination:")
+            logger.error("  Correct: --dst \"E:\"")
+            logger.error("  Or use:  --dst E:\\ (without quotes)")
+            return 1
 
     # Early debug info for path style
     path_style = get_path_style(args)
@@ -268,7 +286,7 @@ def handle_copy_operation(args, logger):
         print(f"  Verified: {result.verified_count()}")
         print(f"  Unverified: {result.unverified_count()}")
 
-    print(f"  Total bytes: {result.total_bytes}")
+    print(f"  Total bytes: {format_bytes_detailed(result.total_bytes)}")
 
     # Return success if no failures and (no verification or all verified)
     return 0 if (result.failure_count() == 0 and

@@ -15,9 +15,11 @@ TODO: Future refactoring opportunities:
 import os
 import sys
 import logging
+import datetime
 from pathlib import Path
 
 from preservelib import operations
+from preservelib import links
 from preserve.utils import (
     find_files_from_args,
     get_hash_algorithms,
@@ -25,6 +27,7 @@ from preserve.utils import (
     get_preserve_dir,
     get_manifest_path,
     get_dazzlelink_dir,
+    format_bytes_detailed,
     _show_directory_help_message,
     HAVE_DAZZLELINK
 )
@@ -58,6 +61,23 @@ def handle_move_operation(args, logger):
                 logger.warning(f"WARNING: Source path has a trailing backslash: '{src}'")
                 logger.warning("         This can cause issues on Windows command line.")
                 logger.warning("         Consider removing it: '{}'".format(src[:-1]))
+
+    # Check for common issue: trailing backslash in destination path on Windows
+    if hasattr(args, 'dst') and args.dst and sys.platform == 'win32':
+        dst = args.dst
+        # Check if the destination path looks like it captured subsequent arguments
+        if '--' in dst or '-L' in dst or dst.count(' ') > 2:
+            logger.error("")
+            logger.error("ERROR: It appears the destination path may have captured command-line arguments.")
+            logger.error(f"       Received: '{dst}'")
+            logger.error("")
+            logger.error("Problem: The trailing backslash escapes the closing quote.")
+            logger.error("  Example: --dst \"E:\\\" <- The \\ escapes the \"")
+            logger.error("")
+            logger.error("Solution: Remove the trailing backslash from the destination:")
+            logger.error("  Correct: --dst \"E:\"")
+            logger.error("  Or use:  --dst E:\\ (without quotes)")
+            return 1
 
     # Find source files
     source_files = find_files_from_args(args)
@@ -113,6 +133,10 @@ def handle_move_operation(args, logger):
     # Get hash algorithms
     hash_algorithms = get_hash_algorithms(args)
 
+    # Get link creation option
+    create_link = getattr(args, 'create_link', None)
+    link_force = getattr(args, 'link_force', False)
+
     # Prepare operation options
     options = {
         'path_style': path_style,
@@ -126,7 +150,8 @@ def handle_move_operation(args, logger):
         'dazzlelink_dir': dazzlelink_dir,
         'dazzlelink_mode': args.dazzlelink_mode if hasattr(args, 'dazzlelink_mode') else 'info',
         'dry_run': args.dry_run if hasattr(args, 'dry_run') else False,
-        'force': args.force if hasattr(args, 'force') else False
+        'force': args.force if hasattr(args, 'force') else False,
+        'create_link': create_link
     }
 
     # Create command line for logging
@@ -152,8 +177,102 @@ def handle_move_operation(args, logger):
         print(f"  Verified: {result.verified_count()}")
         print(f"  Unverified: {result.unverified_count()}")
 
-    print(f"  Total bytes: {result.total_bytes}")
+    print(f"  Total bytes: {format_bytes_detailed(result.total_bytes)}")
+
+    # Determine if move was successful
+    move_success = (result.failure_count() == 0 and
+                   (not options['verify'] or result.unverified_count() == 0))
+
+    # Handle link creation after successful move
+    link_result = None
+    if create_link and move_success:
+        # Determine the source directory that was moved
+        # For directory moves, this is the common parent of all source files
+        if args.sources:
+            source_base_path = Path(args.sources[0])
+            if source_base_path.is_file():
+                source_base_path = source_base_path.parent
+        else:
+            # Find common parent from source files
+            if source_files:
+                source_base_path = Path(source_files[0]).parent
+            else:
+                source_base_path = None
+
+        if source_base_path:
+            # Determine the destination path (where the link should point to)
+            # This must match the path construction logic in operations.py
+            if path_style == 'absolute':
+                # In absolute mode, full path is recreated under destination
+                if sys.platform == 'win32':
+                    drive, path_part = os.path.splitdrive(str(source_base_path))
+                    drive = drive.rstrip(':')  # Remove colon from drive letter
+                    target_path = dest_path / drive / path_part.lstrip('\\/')
+                else:
+                    # Unix: use root-relative path
+                    target_path = dest_path / str(source_base_path).lstrip('/')
+            elif path_style == 'flat':
+                # Flat mode: warn that links don't make sense
+                logger.warning("Link creation with --flat mode is not recommended - "
+                             "directory structure is lost")
+                target_path = dest_path
+            else:
+                # Relative mode
+                if include_base:
+                    target_path = dest_path / source_base_path.name
+                else:
+                    target_path = dest_path
+
+            link_path = source_base_path
+
+            # Check if source is now empty or link_force is set
+            source_is_empty = (not link_path.exists() or
+                              (link_path.is_dir() and not any(link_path.iterdir())))
+
+            if source_is_empty or link_force:
+                if options['dry_run']:
+                    print(f"\n[DRY RUN] Would create {create_link} link:")
+                    print(f"  {link_path} -> {target_path}")
+                else:
+                    print(f"\nCreating {create_link} link...")
+                    print(f"  {link_path} -> {target_path}")
+
+                    success, actual_type, error = links.create_link(
+                        link_path=link_path,
+                        target_path=target_path,
+                        link_type=create_link,
+                        is_directory=True
+                    )
+
+                    if success:
+                        print(f"  Link created successfully ({actual_type})")
+                        link_result = {
+                            'type': actual_type,
+                            'link_path': str(link_path),
+                            'target_path': str(target_path),
+                            'created_at': datetime.datetime.now().isoformat(),
+                            'verified': True
+                        }
+
+                        # Update manifest with link_result
+                        try:
+                            from preservelib.manifest import PreserveManifest
+                            manifest = PreserveManifest(manifest_path)
+                            # Add link_result to the last operation
+                            ops = manifest.manifest.get('operations', [])
+                            if ops:
+                                ops[-1]['link_result'] = link_result
+                                manifest.save()
+                                logger.info(f"Updated manifest with link_result")
+                        except Exception as e:
+                            logger.warning(f"Could not update manifest with link_result: {e}")
+                    else:
+                        print(f"  ERROR: Failed to create link: {error}")
+                        logger.error(f"Link creation failed: {error}")
+            else:
+                print(f"\nWARNING: Cannot create link - source directory not empty: {link_path}")
+                print("  Use --link-force to create link anyway")
+                logger.warning(f"Source directory not empty, skipping link creation: {link_path}")
 
     # Return success if no failures and (no verification or all verified)
-    return 0 if (result.failure_count() == 0 and
-                (not options['verify'] or result.unverified_count() == 0)) else 1
+    return 0 if move_success else 1

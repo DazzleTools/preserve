@@ -137,10 +137,10 @@ def format_path(path: Union[str, Path], relative_to: Optional[Union[str, Path]] 
 def format_size(size_bytes: int) -> str:
     """
     Format a size in bytes to a human-readable string.
-    
+
     Args:
         size_bytes: Size in bytes
-        
+
     Returns:
         Human-readable size string
     """
@@ -150,8 +150,33 @@ def format_size(size_bytes: int) -> str:
         return f"{size_bytes / 1024:.1f} KB"
     elif size_bytes < 1024 * 1024 * 1024:
         return f"{size_bytes / (1024 * 1024):.1f} MB"
+    elif size_bytes < 1024 * 1024 * 1024 * 1024:
+        return f"{size_bytes / (1024 * 1024 * 1024):.2f} GB"
     else:
-        return f"{size_bytes / (1024 * 1024 * 1024):.1f} GB"
+        return f"{size_bytes / (1024 * 1024 * 1024 * 1024):.2f} TB"
+
+
+def format_bytes_detailed(size_bytes: int) -> str:
+    """
+    Format bytes with both raw value (with commas) and human-readable size.
+
+    Args:
+        size_bytes: Size in bytes
+
+    Returns:
+        String like "131,375,979,782 (131.38 GB)"
+
+    Examples:
+        >>> format_bytes_detailed(131375979782)
+        '131,375,979,782 (131.38 GB)'
+        >>> format_bytes_detailed(1024)
+        '1,024 (1.0 KB)'
+        >>> format_bytes_detailed(500)
+        '500 (500 bytes)'
+    """
+    raw_with_commas = f"{size_bytes:,}"
+    human_readable = format_size(size_bytes)
+    return f"{raw_with_commas} ({human_readable})"
 
 def format_timestamp(timestamp: float) -> str:
     """
