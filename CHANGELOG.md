@@ -6,6 +6,29 @@ All notable changes to this project will be documented in this file. This projec
 
 ## [Unreleased]
 
+## [0.6.2] - 2025-12-17
+
+### Added
+- **`--ignore` flag for pre-flight checks** (#40, #41)
+  - `--ignore space` - Skip low disk space warnings and proceed with operation
+  - `--ignore permissions` - Skip permission pre-flight checks (rely on atomic copy-verify-delete)
+  - Comma-separated: `--ignore space,permissions`
+- **Interactive prompting for soft warnings** (MOVE operations)
+  - When low disk space is detected, prompts "Continue anyway? [y/N]"
+  - Non-interactive mode (piped input) fails safely without `--ignore`
+
+### Fixed
+- **Smarter disk space checking logic**
+  - Previous: 10% of transfer size as margin (flawed - 91GB transfer with 100GB free would fail)
+  - New: `recommended_free = max(1GB, transfer_size * 5%)`
+  - Hard fail only when transfer literally won't fit
+  - Soft warning when remaining space would be below recommended minimum
+- **Pre-flight check return types** - Now returns `(all_ok, hard_issues, soft_issues, space_status)` for better handling
+
+### Changed
+- MOVE operations use atomic two-phase approach: copy ALL → verify ALL → delete sources
+- Space status now returns "OK", "SOFT_WARNING", or "HARD_FAIL" instead of boolean
+
 ## [0.6.1] - 2025-12-17
 
 ### Added

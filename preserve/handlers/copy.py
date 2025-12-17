@@ -241,6 +241,11 @@ def handle_copy_operation(args, logger):
             # Copying a directory recursively - use it as source_base
             source_base = str(src_path)
 
+    # Parse --ignore flag for safety check options
+    ignore_checks = []
+    if hasattr(args, 'ignore') and args.ignore:
+        ignore_checks = [x.strip().lower() for x in args.ignore.split(',')]
+
     # Prepare operation options
     options = {
         'path_style': path_style,
@@ -253,7 +258,9 @@ def handle_copy_operation(args, logger):
         'create_dazzlelinks': args.dazzlelink if hasattr(args, 'dazzlelink') else False,
         'dazzlelink_dir': dazzlelink_dir,
         'dazzlelink_mode': args.dazzlelink_mode if hasattr(args, 'dazzlelink_mode') else 'info',
-        'dry_run': args.dry_run if hasattr(args, 'dry_run') else False
+        'dry_run': args.dry_run if hasattr(args, 'dry_run') else False,
+        'ignore_space_warning': 'space' in ignore_checks,
+        'check_permissions': 'permissions' not in ignore_checks,
     }
 
     # Create command line for logging

@@ -126,12 +126,12 @@ class TestCheckDiskSpace(unittest.TestCase):
     def test_sufficient_space(self):
         """Test that check passes with sufficient space."""
         # Request a small amount that should always be available
-        has_space, required, available, message = check_disk_space(
+        status, recommended, available, message = check_disk_space(
             self.test_dir,
             required_bytes=1024,  # 1 KB
-            safety_margin=0.1
+            safety_margin=0.05
         )
-        self.assertTrue(has_space)
+        self.assertEqual(status, "OK")
         self.assertIn("OK", message)
 
     def test_returns_available_space(self):
@@ -139,21 +139,36 @@ class TestCheckDiskSpace(unittest.TestCase):
         _, _, available, _ = check_disk_space(self.test_dir, 1024)
         self.assertGreater(available, 0)
 
-    def test_safety_margin_applied(self):
-        """Test that safety margin is applied to required bytes."""
-        _, required, _, _ = check_disk_space(
+    def test_recommended_free_uses_absolute_minimum(self):
+        """Test that recommended free space uses absolute minimum for small transfers."""
+        # For small transfers, 1GB absolute minimum should be used
+        status, recommended, _, _ = check_disk_space(
             self.test_dir,
-            required_bytes=1000,
-            safety_margin=0.1  # 10%
+            required_bytes=1000,  # 1 KB transfer
+            safety_margin=0.05  # 5%
         )
-        self.assertEqual(required, 1100)  # 1000 * 1.1
+        # 5% of 1000 = 50 bytes, but minimum is 1GB
+        self.assertEqual(recommended, 1 * 1024 * 1024 * 1024)  # 1GB minimum
+
+    def test_recommended_free_uses_percentage_for_large_transfers(self):
+        """Test that recommended free uses percentage for large transfers."""
+        # For large transfers, percentage should exceed absolute minimum
+        large_transfer = 100 * 1024 * 1024 * 1024  # 100GB
+        status, recommended, _, _ = check_disk_space(
+            self.test_dir,
+            required_bytes=large_transfer,
+            safety_margin=0.05  # 5%
+        )
+        # 5% of 100GB = 5GB, which exceeds 1GB minimum
+        expected = int(large_transfer * 0.05)
+        self.assertEqual(recommended, expected)
 
     def test_nonexistent_path_uses_parent(self):
         """Test that nonexistent path checks parent directory."""
         nonexistent = Path(self.test_dir) / 'does' / 'not' / 'exist'
-        has_space, _, available, _ = check_disk_space(nonexistent, 1024)
+        status, _, available, _ = check_disk_space(nonexistent, 1024)
         # Should still work by finding existing parent
-        self.assertTrue(has_space)
+        self.assertEqual(status, "OK")
         self.assertGreater(available, 0)
 
     def test_message_format(self):
@@ -165,6 +180,11 @@ class TestCheckDiskSpace(unittest.TestCase):
             "OK" in message or
             "WARNING" in message
         )
+
+    def test_status_values(self):
+        """Test that status returns valid values."""
+        status, _, _, _ = check_disk_space(self.test_dir, 1024)
+        self.assertIn(status, ["OK", "SOFT_WARNING", "HARD_FAIL"])
 
 
 class TestInsufficientSpaceError(unittest.TestCase):
@@ -223,15 +243,16 @@ class TestIntegration(unittest.TestCase):
         self.assertEqual(total_size, 5000)
 
         # Check if destination has space
-        has_space, required, available, message = check_disk_space(
+        status, recommended, available, message = check_disk_space(
             self.dest_dir,
             total_size,
-            safety_margin=0.1
+            safety_margin=0.05
         )
 
         # Should pass for this small amount
-        self.assertTrue(has_space)
-        self.assertEqual(required, 5500)  # 5000 * 1.1
+        self.assertEqual(status, "OK")
+        # recommended should be 1GB minimum (since 5% of 5000 is tiny)
+        self.assertEqual(recommended, 1 * 1024 * 1024 * 1024)
 
 
 class TestCheckWritePermission(unittest.TestCase):
@@ -311,34 +332,46 @@ class TestPreflightChecks(unittest.TestCase):
 
     def test_all_checks_pass(self):
         """Test that all checks pass for valid setup."""
-        checks_ok, issues = preflight_checks(
+        all_ok, hard_issues, soft_issues, space_status = preflight_checks(
             source_files=self.files,
             dest_path=self.dest_dir,
             operation="COPY"
         )
-        self.assertTrue(checks_ok)
-        self.assertEqual(len(issues), 0)
+        self.assertTrue(all_ok)
+        self.assertEqual(len(hard_issues), 0)
+        # Soft issues may exist (low space warning) but shouldn't block
+        self.assertIn(space_status, ["OK", "SOFT_WARNING", ""])
 
     def test_move_checks_delete_permission(self):
         """Test that MOVE operation checks delete permissions."""
-        checks_ok, issues = preflight_checks(
+        all_ok, hard_issues, soft_issues, space_status = preflight_checks(
             source_files=self.files,
             dest_path=self.dest_dir,
             operation="MOVE"
         )
         # Should pass for normal files in user temp directory
-        self.assertTrue(checks_ok)
+        self.assertTrue(all_ok)
+        self.assertEqual(len(hard_issues), 0)
 
     def test_nonexistent_source_fails(self):
         """Test that nonexistent source files cause failure."""
         nonexistent = Path(self.test_dir) / 'nonexistent.txt'
-        checks_ok, issues = preflight_checks(
+        all_ok, hard_issues, soft_issues, space_status = preflight_checks(
             source_files=[nonexistent],
             dest_path=self.dest_dir,
             operation="COPY"
         )
-        self.assertFalse(checks_ok)
-        self.assertGreater(len(issues), 0)
+        self.assertFalse(all_ok)
+        self.assertGreater(len(hard_issues), 0)
+
+    def test_returns_space_status(self):
+        """Test that space_status is returned."""
+        all_ok, hard_issues, soft_issues, space_status = preflight_checks(
+            source_files=self.files,
+            dest_path=self.dest_dir,
+            operation="COPY"
+        )
+        self.assertIn(space_status, ["OK", "SOFT_WARNING", "HARD_FAIL"])
 
 
 class TestPermissionCheckError(unittest.TestCase):

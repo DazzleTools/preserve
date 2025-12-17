@@ -99,6 +99,7 @@ Note: When copying directories, --recursive (-r) is required to include files in
     _add_path_args(copy_parser)
     _add_verification_args(copy_parser)
     _add_dazzlelink_args(copy_parser)
+    _add_safety_args(copy_parser)
     copy_parser.add_argument('--dry-run', action='store_true',
                             help='Show what would be done without making changes')
     copy_parser.add_argument('--overwrite', action='store_true',
@@ -138,6 +139,7 @@ Note: When moving directories, --recursive (-r) is required to include files in 
     _add_path_args(move_parser)
     _add_verification_args(move_parser)
     _add_dazzlelink_args(move_parser)
+    _add_safety_args(move_parser)
     move_parser.add_argument('--dry-run', action='store_true',
                             help='Show what would be done without making changes')
     move_parser.add_argument('--overwrite', action='store_true',
@@ -359,6 +361,17 @@ def _add_link_args(parser):
                                 'auto (platform default)')
     link_group.add_argument('--link-force', action='store_true',
                            help='Force link creation even if source path still has content')
+
+
+def _add_safety_args(parser):
+    """Add pre-flight safety check arguments to a parser"""
+    safety_group = parser.add_argument_group('Safety check options')
+    safety_group.add_argument('--ignore',
+                             metavar='CHECK',
+                             help='Ignore specific pre-flight checks (comma-separated). '
+                                  'Values: space (low disk space warnings), '
+                                  'permissions (skip permission pre-checks). '
+                                  'Example: --ignore space,permissions')
 
 
 def display_help_with_examples(parser, args):

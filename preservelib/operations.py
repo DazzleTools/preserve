@@ -97,21 +97,33 @@ def calculate_total_size(source_files: List[Union[str, Path]]) -> int:
     return total
 
 
+# Disk space check constants
+ABSOLUTE_MIN_FREE_BYTES = 1 * 1024 * 1024 * 1024  # 1GB absolute minimum to leave free
+TRANSFER_SAFETY_PERCENT = 0.05  # 5% of transfer size as recommended buffer
+
+
 def check_disk_space(
     dest_path: Union[str, Path],
     required_bytes: int,
-    safety_margin: float = 0.1
-) -> Tuple[bool, int, int, str]:
+    safety_margin: float = 0.05  # Kept for backward compatibility, now uses smarter logic
+) -> Tuple[str, int, int, str]:
     """
     Check if destination has enough disk space.
+
+    Uses smart logic:
+    - HARD_FAIL: Transfer literally won't fit (would_remain < 0)
+    - SOFT_WARNING: Transfer fits but would leave less than recommended free
+      (recommended = max(1GB, 5% of transfer size))
+    - OK: Plenty of space
 
     Args:
         dest_path: Destination path (will use drive/mount point)
         required_bytes: Bytes needed for the operation
-        safety_margin: Additional margin (default 10%)
+        safety_margin: Percentage of transfer size to recommend leaving free (default 5%)
 
     Returns:
-        Tuple of (has_space, required_with_margin, available, message)
+        Tuple of (status, recommended_free, available, message)
+        where status is "OK", "SOFT_WARNING", or "HARD_FAIL"
     """
     dest_path = Path(dest_path)
 
@@ -128,33 +140,50 @@ def check_disk_space(
         usage = shutil.disk_usage(str(check_path))
         available = usage.free
 
-        # Add safety margin
-        required_with_margin = int(required_bytes * (1 + safety_margin))
+        # Calculate what would remain after transfer
+        would_remain = available - required_bytes
 
-        if available >= required_with_margin:
+        # Calculate recommended free space: max of absolute minimum or % of transfer
+        recommended_free = max(
+            ABSOLUTE_MIN_FREE_BYTES,
+            int(required_bytes * safety_margin)
+        )
+
+        if would_remain < 0:
+            # HARD FAIL: Transfer literally won't fit
+            shortfall = abs(would_remain)
             return (
-                True,
-                required_with_margin,
+                "HARD_FAIL",
+                recommended_free,
                 available,
-                f"OK: {_format_size(available)} available, {_format_size(required_with_margin)} needed"
-            )
-        else:
-            shortfall = required_with_margin - available
-            return (
-                False,
-                required_with_margin,
-                available,
-                f"INSUFFICIENT: need {_format_size(required_with_margin)} "
-                f"(including {int(safety_margin*100)}% margin), "
+                f"INSUFFICIENT: need {_format_size(required_bytes)}, "
                 f"only {_format_size(available)} available "
                 f"(short by {_format_size(shortfall)})"
             )
+        elif would_remain < recommended_free:
+            # SOFT WARNING: Would leave less than recommended
+            return (
+                "SOFT_WARNING",
+                recommended_free,
+                available,
+                f"LOW SPACE WARNING: transfer would leave only {_format_size(would_remain)} free "
+                f"(recommended: {_format_size(recommended_free)})"
+            )
+        else:
+            # OK: Plenty of space
+            return (
+                "OK",
+                recommended_free,
+                available,
+                f"OK: {_format_size(available)} available, "
+                f"{_format_size(would_remain)} would remain after transfer"
+            )
     except (OSError, IOError) as e:
         logger.warning(f"Could not check disk space at {check_path}: {e}")
-        # Return True with warning - don't block operation if we can't check
+        # Return OK with warning - don't block operation if we can't check
         return (
-            True,
-            required_bytes,
+            "OK",
+            0,
             0,
             f"WARNING: Could not determine available space: {e}"
         )
@@ -259,8 +288,8 @@ def preflight_checks(
     operation: str = "COPY",
     check_space: bool = True,
     check_permissions: bool = True,
-    space_safety_margin: float = 0.1
-) -> Tuple[bool, List[str]]:
+    space_safety_margin: float = 0.05
+) -> Tuple[bool, List[str], List[str], str]:
     """
     Perform pre-flight checks before an operation.
 
@@ -273,35 +302,44 @@ def preflight_checks(
         operation: "COPY" or "MOVE"
         check_space: Whether to check disk space
         check_permissions: Whether to check permissions
-        space_safety_margin: Safety margin for space check
+        space_safety_margin: Safety margin for space check (default 5%)
 
     Returns:
-        Tuple of (all_checks_passed, list of issues)
+        Tuple of (all_ok, hard_issues, soft_issues, space_status)
+        - all_ok: True if no hard issues found
+        - hard_issues: List of blocking issues (must stop)
+        - soft_issues: List of warnings (can continue with confirmation)
+        - space_status: "OK", "SOFT_WARNING", "HARD_FAIL", or "" if not checked
     """
-    issues = []
+    hard_issues = []
+    soft_issues = []
+    space_status = ""
     is_move = operation.upper() == "MOVE"
 
     # Check destination write permission
     if check_permissions:
         has_perm, perm_msg = check_write_permission(dest_path)
         if not has_perm:
-            issues.append(f"Destination: {perm_msg}")
+            hard_issues.append(f"Destination: {perm_msg}")
 
     # Check source permissions
     if check_permissions:
         src_ok, src_errors = check_source_permissions(source_files, check_delete=is_move)
-        issues.extend(src_errors)
+        hard_issues.extend(src_errors)
 
     # Check disk space
     if check_space and source_files:
         total_size = calculate_total_size(source_files)
-        has_space, required, available, space_msg = check_disk_space(
+        space_status, recommended_free, available, space_msg = check_disk_space(
             dest_path, total_size, safety_margin=space_safety_margin
         )
-        if not has_space:
-            issues.append(f"Disk space: {space_msg}")
+        if space_status == "HARD_FAIL":
+            hard_issues.append(f"Disk space: {space_msg}")
+        elif space_status == "SOFT_WARNING":
+            soft_issues.append(f"Disk space: {space_msg}")
 
-    return len(issues) == 0, issues
+    all_ok = len(hard_issues) == 0
+    return all_ok, hard_issues, soft_issues, space_status
 
 
 class OperationResult:
@@ -500,7 +538,8 @@ def copy_operation(
         "dry_run": False,
         "check_space": True,  # Pre-flight disk space check
         "check_permissions": True,  # Pre-flight permission check
-        "space_safety_margin": 0.1,  # 10% safety margin
+        "space_safety_margin": 0.05,  # 5% of transfer size as buffer
+        "ignore_space_warning": False,  # Whether to ignore soft space warnings
     }
 
     # Merge with provided options
@@ -514,7 +553,7 @@ def copy_operation(
 
     # Pre-flight checks (space and permissions)
     if (options["check_space"] or options["check_permissions"]) and source_files:
-        checks_ok, issues = preflight_checks(
+        all_ok, hard_issues, soft_issues, space_status = preflight_checks(
             source_files=source_files,
             dest_path=dest_base,
             operation="COPY",
@@ -523,27 +562,38 @@ def copy_operation(
             space_safety_margin=options["space_safety_margin"]
         )
 
+        all_issues = hard_issues + soft_issues
+
         if options["dry_run"]:
-            if issues:
-                logger.info(f"[DRY RUN] Pre-flight issues found: {len(issues)}")
-                for issue in issues:
-                    logger.info(f"  - {issue}")
+            if all_issues:
+                logger.info(f"[DRY RUN] Pre-flight issues found: {len(all_issues)}")
+                for issue in hard_issues:
+                    logger.info(f"  - [BLOCKING] {issue}")
+                for issue in soft_issues:
+                    logger.info(f"  - [WARNING] {issue}")
             else:
                 logger.info("[DRY RUN] All pre-flight checks passed")
-        elif not checks_ok:
-            # For COPY, log warnings but continue (files are not deleted)
-            logger.warning(f"Pre-flight check warnings ({len(issues)}):")
-            for issue in issues:
+        elif not all_ok:
+            # Hard issues found - must stop
+            logger.error(f"Pre-flight checks FAILED ({len(hard_issues)} blocking issues):")
+            for issue in hard_issues:
+                logger.error(f"  - {issue}")
+            # Check for hard disk space failure
+            if space_status == "HARD_FAIL":
+                total_size = calculate_total_size(source_files)
+                _, recommended, available, _ = check_disk_space(
+                    dest_base, total_size, safety_margin=options["space_safety_margin"]
+                )
+                raise InsufficientSpaceError(total_size, available, str(dest_base))
+            # For other permission issues on COPY, we can warn and continue
+            if hard_issues:
+                logger.warning("COPY operation continuing despite permission warnings (source files preserved)")
+        elif soft_issues and not options.get("ignore_space_warning", False):
+            # Soft issues found - warn but continue for COPY
+            logger.warning(f"Pre-flight warnings ({len(soft_issues)}):")
+            for issue in soft_issues:
                 logger.warning(f"  - {issue}")
-            # Check for critical issues (insufficient space)
-            for issue in issues:
-                if "Disk space: INSUFFICIENT" in issue:
-                    # Extract details and raise
-                    total_size = calculate_total_size(source_files)
-                    _, required, available, _ = check_disk_space(
-                        dest_base, total_size, safety_margin=options["space_safety_margin"]
-                    )
-                    raise InsufficientSpaceError(required, available, str(dest_base))
+            logger.warning("COPY operation continuing (use --ignore space to suppress)")
         else:
             logger.info("All pre-flight checks passed")
 
@@ -1269,7 +1319,9 @@ def move_operation(
         "force": False,  # Force removal even if verification fails
         "check_space": True,  # Pre-flight disk space check
         "check_permissions": True,  # Pre-flight permission check
-        "space_safety_margin": 0.1,  # 10% safety margin
+        "space_safety_margin": 0.05,  # 5% of transfer size as buffer
+        "ignore_space_warning": False,  # Whether to ignore soft space warnings
+        "prompt_on_warning": None,  # Callback for prompting user on soft warnings
     }
 
     # Merge with provided options
@@ -1284,7 +1336,7 @@ def move_operation(
     # CRITICAL: Pre-flight checks for MOVE are MANDATORY
     # For destructive MOVE operations, ALL checks must pass before we move ANY files
     if (options["check_space"] or options["check_permissions"]) and source_files:
-        checks_ok, issues = preflight_checks(
+        all_ok, hard_issues, soft_issues, space_status = preflight_checks(
             source_files=source_files,
             dest_path=dest_base,
             operation="MOVE",  # This enables delete permission checks
@@ -1294,29 +1346,31 @@ def move_operation(
         )
 
         if options["dry_run"]:
-            if issues:
-                logger.info(f"[DRY RUN] Pre-flight issues found: {len(issues)}")
-                for issue in issues:
-                    logger.info(f"  - {issue}")
+            all_issues = hard_issues + soft_issues
+            if all_issues:
+                logger.info(f"[DRY RUN] Pre-flight issues found: {len(all_issues)}")
+                for issue in hard_issues:
+                    logger.info(f"  - [BLOCKING] {issue}")
+                for issue in soft_issues:
+                    logger.info(f"  - [WARNING] {issue}")
             else:
                 logger.info("[DRY RUN] All pre-flight checks passed")
-        elif not checks_ok:
-            # MOVE is destructive - we FAIL if ANY check fails
-            logger.error(f"Pre-flight checks FAILED for MOVE operation ({len(issues)} issues):")
-            for issue in issues:
+        elif not all_ok:
+            # MOVE is destructive - hard issues always fail
+            logger.error(f"Pre-flight checks FAILED for MOVE operation ({len(hard_issues)} blocking issues):")
+            for issue in hard_issues:
                 logger.error(f"  - {issue}")
 
             # Determine the primary error type and raise appropriate exception
-            for issue in issues:
-                if "Disk space: INSUFFICIENT" in issue:
-                    total_size = calculate_total_size(source_files)
-                    _, required, available, _ = check_disk_space(
-                        dest_base, total_size, safety_margin=options["space_safety_margin"]
-                    )
-                    raise InsufficientSpaceError(required, available, str(dest_base))
+            if space_status == "HARD_FAIL":
+                total_size = calculate_total_size(source_files)
+                _, recommended, available, _ = check_disk_space(
+                    dest_base, total_size, safety_margin=options["space_safety_margin"]
+                )
+                raise InsufficientSpaceError(total_size, available, str(dest_base))
 
             # If it's a permission issue, raise PermissionCheckError
-            perm_issues = [i for i in issues if "Cannot" in i or "Permission" in i.lower()]
+            perm_issues = [i for i in hard_issues if "Cannot" in i or "Permission" in i.lower()]
             if perm_issues:
                 raise PermissionCheckError(
                     path=str(dest_base),
@@ -1326,7 +1380,32 @@ def move_operation(
                 )
 
             # Generic failure - shouldn't happen but be safe
-            raise RuntimeError(f"Pre-flight checks failed: {'; '.join(issues)}")
+            raise RuntimeError(f"Pre-flight checks failed: {'; '.join(hard_issues)}")
+        elif soft_issues:
+            # Soft issues found - need user confirmation for MOVE
+            if options.get("ignore_space_warning", False):
+                # User explicitly chose to ignore warnings
+                logger.warning(f"Pre-flight warnings ({len(soft_issues)}) - ignored by user:")
+                for issue in soft_issues:
+                    logger.warning(f"  - {issue}")
+            elif options.get("prompt_on_warning"):
+                # Callback provided for prompting
+                logger.warning(f"Pre-flight warnings ({len(soft_issues)}):")
+                for issue in soft_issues:
+                    logger.warning(f"  - {issue}")
+                # Call the prompt callback - it should return True to continue, False to abort
+                if not options["prompt_on_warning"](soft_issues):
+                    raise RuntimeError("Operation cancelled by user due to space warnings")
+            else:
+                # No ignore flag and no prompt callback - fail safe for MOVE
+                logger.error(f"Pre-flight warnings require confirmation for MOVE ({len(soft_issues)}):")
+                for issue in soft_issues:
+                    logger.error(f"  - {issue}")
+                logger.error("Use --ignore space to proceed anyway, or free up disk space")
+                raise RuntimeError(
+                    f"MOVE operation requires confirmation for space warnings. "
+                    f"Use --ignore space to proceed."
+                )
         else:
             logger.info("All pre-flight checks passed for MOVE operation")
 

@@ -138,6 +138,28 @@ def handle_move_operation(args, logger):
     create_link = getattr(args, 'create_link', None)
     link_force = getattr(args, 'link_force', False)
 
+    # Parse --ignore flag for safety check options
+    ignore_checks = []
+    if hasattr(args, 'ignore') and args.ignore:
+        ignore_checks = [x.strip().lower() for x in args.ignore.split(',')]
+
+    # Define prompt callback for soft warnings (interactive mode)
+    def prompt_on_warning(issues):
+        """Prompt user to continue on soft warnings. Returns True to continue."""
+        import sys
+        if not sys.stdin.isatty():
+            # Non-interactive mode - don't continue without explicit --ignore
+            return False
+        print("\nWARNING: The following issues were detected:")
+        for issue in issues:
+            print(f"  - {issue}")
+        print("")
+        try:
+            response = input("Continue anyway? [y/N]: ").strip().lower()
+            return response in ('y', 'yes')
+        except (EOFError, KeyboardInterrupt):
+            return False
+
     # Prepare operation options
     options = {
         'path_style': path_style,
@@ -152,7 +174,10 @@ def handle_move_operation(args, logger):
         'dazzlelink_mode': args.dazzlelink_mode if hasattr(args, 'dazzlelink_mode') else 'info',
         'dry_run': args.dry_run if hasattr(args, 'dry_run') else False,
         'force': args.force if hasattr(args, 'force') else False,
-        'create_link': create_link
+        'create_link': create_link,
+        'ignore_space_warning': 'space' in ignore_checks,
+        'check_permissions': 'permissions' not in ignore_checks,
+        'prompt_on_warning': prompt_on_warning,
     }
 
     # Create command line for logging
