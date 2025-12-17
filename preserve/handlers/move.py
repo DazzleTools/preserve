@@ -224,22 +224,118 @@ def handle_move_operation(args, logger):
         print("=" * 60)
         return 1
 
-    # Print summary
-    print("\nMOVE Operation Summary:")
-    print(f"  Total files: {result.total_count()}")
-    print(f"  Succeeded: {result.success_count()}")
-    print(f"  Failed: {result.failure_count()}")
-    print(f"  Skipped: {result.skip_count()}")
+    # Print summary with clear explanation of MOVE process
+    print("\n" + "=" * 60)
+    print("MOVE Operation Summary")
+    print("=" * 60)
+
+    # Get counts from result tracking
+    moved_count = len(getattr(result, 'moved_sources', []))
+    retained_count = len(getattr(result, 'retained_sources', []))
+    delete_errors = getattr(result, 'delete_errors', {})
+
+    # Show file counts
+    print(f"  Files processed:  {result.total_count()}")
+    print(f"  Copy failed:      {result.failure_count()}")
+    print(f"  Skipped:          {result.skip_count()}")
 
     if options['verify']:
-        print(f"  Verified: {result.verified_count()}")
-        print(f"  Unverified: {result.unverified_count()}")
+        print(f"  Verified:         {result.verified_count()}")
 
-    print(f"  Total bytes: {format_bytes_detailed(result.total_bytes)}")
+    # Show move-specific results (only for non-dry-run)
+    if not options['dry_run']:
+        print("")
+        print(f"  Successfully MOVED (source deleted):     {moved_count}")
+        print(f"  COPIED ONLY (source file retained):      {retained_count}")
+
+    print(f"\n  Total bytes: {format_bytes_detailed(result.total_bytes)}")
 
     # Determine if move was successful
     move_success = (result.failure_count() == 0 and
-                   (not options['verify'] or result.unverified_count() == 0))
+                   (not options['verify'] or result.unverified_count() == 0) and
+                   retained_count == 0)
+
+    # Provide clear guidance based on outcome
+    if options['dry_run']:
+        print("\n[DRY RUN] No files were actually moved.")
+        print("Remove --dry-run to perform the operation.")
+    elif move_success and moved_count > 0:
+        print("\nSUCCESS: All files moved. Source files have been deleted.")
+    elif retained_count > 0:
+        # Partial success - some files copied but sources retained
+        print("\n" + "=" * 60)
+        print("WARNING: Some source files were NOT deleted")
+        print("=" * 60)
+        print("")
+        print("How MOVE works: Files are COPIED first, then VERIFIED, then")
+        print("source files are DELETED only after successful verification.")
+        print("")
+        print("Your source files are SAFE - nothing was lost.")
+        print(f"  - {moved_count} file(s) fully moved (source deleted)")
+        print(f"  - {retained_count} file(s) copied but source retained")
+
+        # Show reasons for retention
+        verification_skipped = sum(1 for _, _, reason in getattr(result, 'retained_sources', [])
+                                   if reason == "verification_skipped")
+        delete_failed = sum(1 for _, _, reason in getattr(result, 'retained_sources', [])
+                           if reason == "delete_failed")
+
+        if verification_skipped > 0:
+            print(f"\n  Verification skipped: {verification_skipped} file(s)")
+            print("    These files copied but couldn't be verified.")
+            print("    Sources retained for safety.")
+
+        if delete_failed > 0:
+            print(f"\n  Delete failed: {delete_failed} file(s)")
+            print("    These files copied and verified successfully,")
+            print("    but source deletion failed (likely permissions).")
+
+            # Show specific errors if few enough
+            if len(delete_errors) <= 3:
+                for src, err in delete_errors.items():
+                    print(f"      {src}: {err}")
+
+        # Provide actionable guidance
+        print("\n" + "-" * 60)
+        print("TO COMPLETE THE MOVE:")
+        print("-" * 60)
+        if delete_failed > 0:
+            print("  Option 1: Fix permissions and re-run with --force")
+            print(f"    preserve MOVE [same args] --force")
+            print("")
+            if sys.platform == 'win32':
+                print("  Option 2: Run as Administrator")
+                print("    Right-click Command Prompt, select 'Run as administrator'")
+            else:
+                print("  Option 2: Run with sudo")
+                print("    sudo preserve MOVE [same args] --force")
+        elif verification_skipped > 0:
+            print("  Re-run with --force to delete sources without re-verifying:")
+            print(f"    preserve MOVE [same args] --force")
+            print("")
+            print("  Or manually verify files match, then delete sources.")
+
+        print("\n" + "-" * 60)
+        print("TO UNDO (delete destination copies, keep sources):")
+        print("-" * 60)
+        print("  If you want to abort and free destination space:")
+        print(f"    preserve RESTORE --src \"{dest_path}\" --dry-run  # Preview first")
+        print(f"    # Then manually delete the destination directory")
+        print("  Your source files remain untouched.")
+
+    elif result.failure_count() > 0:
+        # Copy failures
+        print("\n" + "=" * 60)
+        print("ERROR: MOVE FAILED - Some files could not be copied")
+        print("=" * 60)
+        print("")
+        print("Your source files are SAFE - nothing was deleted.")
+        print(f"  - {result.failure_count()} file(s) failed to copy")
+        print(f"  - {moved_count} file(s) successfully moved")
+        print("")
+        print("Check the errors above and resolve the issues, then re-run.")
+
+    print("=" * 60)
 
     # Handle link creation after successful move
     link_result = None

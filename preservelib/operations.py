@@ -599,11 +599,13 @@ def copy_operation(
 
     # Create manifest
     manifest = PreserveManifest()
+    # Filter out non-serializable options (like callback functions) for manifest
+    manifest_options = {k: v for k, v in options.items() if not callable(v)}
     operation_id = manifest.add_operation(
         operation_type="COPY",
         source_path=",".join(str(s) for s in source_files),
         destination_path=str(dest_base),
-        options=options,
+        options=manifest_options,
         command_line=command_line,
     )
 
@@ -1411,11 +1413,13 @@ def move_operation(
 
     # Create manifest
     manifest = PreserveManifest()
+    # Filter out non-serializable options (like callback functions) for manifest
+    manifest_options = {k: v for k, v in options.items() if not callable(v)}
     operation_id = manifest.add_operation(
         operation_type="MOVE",
         source_path=",".join(str(s) for s in source_files),
         destination_path=str(dest_base),
-        options=options,
+        options=manifest_options,
         command_line=command_line,
     )
 
@@ -1441,6 +1445,13 @@ def move_operation(
     result.error_messages = copy_result.error_messages
     result.total_bytes = copy_result.total_bytes
 
+    # Track source deletion results for clear user feedback
+    # moved_sources: files where source was successfully deleted (truly moved)
+    # retained_sources: files where source was kept (verification failed or delete failed)
+    result.moved_sources = []
+    result.retained_sources = []
+    result.delete_errors = {}
+
     # Now remove source files if they were successfully copied and verified
     if not options["dry_run"]:
         for source_path, dest_path in copy_result.succeeded:
@@ -1448,15 +1459,23 @@ def move_operation(
             if not options["force"]:
                 verified = any(path == dest_path for path, _ in copy_result.verified)
                 if not verified:
+                    result.retained_sources.append((source_path, dest_path, "verification_skipped"))
                     continue
 
             try:
                 # Remove the source file
                 os.unlink(source_path)
                 logger.debug(f"Removed source file: {source_path}")
+                result.moved_sources.append((source_path, dest_path))
             except Exception as e:
                 logger.error(f"Error removing source file {source_path}: {e}")
                 result.error_messages[source_path] = f"Error removing source file: {e}"
+                result.delete_errors[source_path] = str(e)
+                result.retained_sources.append((source_path, dest_path, "delete_failed"))
+    else:
+        # Dry run - all would be retained
+        for source_path, dest_path in copy_result.succeeded:
+            result.retained_sources.append((source_path, dest_path, "dry_run"))
 
     # Save manifest if path provided
     if manifest_path and not options["dry_run"]:
