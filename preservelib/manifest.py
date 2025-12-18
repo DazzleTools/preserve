@@ -23,14 +23,19 @@ logger = logging.getLogger(__name__)
 class PreserveManifest:
     """
     Manifest for tracking file operations and metadata.
-    
+
     The manifest stores information about:
     - Source and destination paths for each file
     - File metadata (timestamps, permissions, etc.)
     - Hash values for verification
     - Operation history for reproducibility
+
+    Schema v3.0 (0.7.x) adds DAG support:
+    - manifest_id: Unique identifier for this manifest
+    - parent_ids: Array of parent manifest IDs (enables DAG for lineage tracking)
+    - lineage: Helper fields for fast ancestry queries
     """
-    
+
     def __init__(self, manifest_path: Optional[Union[str, Path]] = None):
         """
         Initialize a new or existing manifest.
@@ -38,21 +43,41 @@ class PreserveManifest:
         Args:
             manifest_path: Path to an existing manifest file to load (optional)
         """
-        # Default manifest structure
+        # Default manifest structure (v3.0 schema)
         self.manifest = {
-            "manifest_version": 2,
+            "manifest_version": 3,
+            "manifest_id": self._generate_manifest_id(),
+            "parent_ids": [],  # DAG support: array of parent manifest IDs
+            "lineage": {
+                "root_id": None,  # ID of first ancestor with no parents
+                "depth": 0,       # Distance from root
+                "is_merge": False # True if multiple parents (0.8.x feature)
+            },
             "created_at": datetime.datetime.now().isoformat(),
             "updated_at": datetime.datetime.now().isoformat(),
             "platform": self._get_platform_info(),
             "host_info": self._get_host_info(),
             "operations": [],
             "files": {},
-            "metadata": {}
+            "metadata": {},
+            "extensions": {}  # Reserved for dazzlelink, etc.
         }
-        
+
         # Load existing manifest if provided
         if manifest_path:
             self.load(manifest_path)
+
+    def _generate_manifest_id(self) -> str:
+        """
+        Generate a unique manifest ID.
+
+        For v3.0, uses UUID. In future versions (0.8.x+), this could
+        become content-addressable (sha256 of manifest content).
+
+        Returns:
+            Unique manifest ID string
+        """
+        return f"pm-{uuid.uuid4().hex[:12]}"
     
     def _get_platform_info(self) -> Dict[str, str]:
         """
@@ -257,41 +282,64 @@ class PreserveManifest:
     def load(self, path: Union[str, Path]) -> bool:
         """
         Load a manifest from a file.
-        
+
+        Supports manifest versions 1, 2, and 3 with automatic migration
+        of older formats to include v3 fields.
+
         Args:
             path: Path to the manifest file
-            
+
         Returns:
             True if successful, False otherwise
         """
         try:
             path = Path(path)
-            
+
             if not path.exists():
                 logger.warning(f"Manifest file does not exist: {path}")
                 return False
-            
+
             with open(path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-            
-            # Validate manifest version (support both v1 and v2)
+
+            # Validate manifest version (support v1, v2, and v3)
             manifest_version = data.get("manifest_version", 1)
-            if manifest_version not in [1, 2]:
+            if manifest_version not in [1, 2, 3]:
                 logger.warning(f"Unsupported manifest version: {manifest_version}")
                 return False
 
-            # If loading a v1 manifest, add empty host_info for compatibility
+            # Migrate v1 manifest to include host_info
             if manifest_version == 1:
                 data["host_info"] = {
                     "hostname": "unknown (v1 manifest)",
                     "note": "Manifest created before host tracking was added"
                 }
-            
+
+            # Migrate v1/v2 manifests to include v3 DAG fields
+            if manifest_version < 3:
+                # Add manifest_id if missing
+                if "manifest_id" not in data:
+                    data["manifest_id"] = self._generate_manifest_id()
+                # Add parent_ids if missing (empty for migrated manifests)
+                if "parent_ids" not in data:
+                    data["parent_ids"] = []
+                # Add lineage if missing
+                if "lineage" not in data:
+                    data["lineage"] = {
+                        "root_id": data.get("manifest_id"),
+                        "depth": 0,
+                        "is_merge": False
+                    }
+                # Add extensions if missing
+                if "extensions" not in data:
+                    data["extensions"] = {}
+                logger.debug(f"Migrated v{manifest_version} manifest to v3 format")
+
             # Update manifest with loaded data
             self.manifest = data
             logger.debug(f"Loaded manifest from {path}")
             return True
-            
+
         except json.JSONDecodeError:
             logger.error(f"Invalid JSON in manifest file: {path}")
             return False
@@ -651,38 +699,190 @@ class PreserveManifest:
     def validate(self) -> Tuple[bool, List[str]]:
         """
         Validate the manifest structure.
-        
+
         Returns:
             Tuple of (is_valid, error_messages)
         """
         errors = []
-        
+
         # Check required top-level keys
         required_keys = ["manifest_version", "created_at", "operations", "files"]
         for key in required_keys:
             if key not in self.manifest:
                 errors.append(f"Missing required key: {key}")
-        
-        # Check manifest version (support both v1 and v2)
+
+        # Check manifest version (support v1, v2, and v3)
         manifest_version = self.manifest.get("manifest_version")
-        if manifest_version not in [1, 2]:
+        if manifest_version not in [1, 2, 3]:
             errors.append(f"Unsupported manifest version: {manifest_version}")
-        
+
+        # Validate v3-specific fields if present
+        if manifest_version == 3:
+            if "manifest_id" not in self.manifest:
+                errors.append("v3 manifest missing required 'manifest_id' field")
+            if "parent_ids" not in self.manifest:
+                errors.append("v3 manifest missing required 'parent_ids' field")
+            elif not isinstance(self.manifest["parent_ids"], list):
+                errors.append("'parent_ids' must be an array")
+
         # Validate operations
         for i, operation in enumerate(self.manifest.get("operations", [])):
             if "type" not in operation:
                 errors.append(f"Operation {i} is missing required 'type' field")
             if "timestamp" not in operation:
                 errors.append(f"Operation {i} is missing required 'timestamp' field")
-        
+
         # Validate files
         for file_id, file_info in self.manifest.get("files", {}).items():
             if "source_path" not in file_info:
                 errors.append(f"File {file_id} is missing required 'source_path' field")
             if "destination_path" not in file_info:
                 errors.append(f"File {file_id} is missing required 'destination_path' field")
-        
+
         return len(errors) == 0, errors
+
+    # =========================================================================
+    # DAG/Lineage Methods (v3.0)
+    # =========================================================================
+
+    def get_manifest_id(self) -> str:
+        """
+        Get the unique ID of this manifest.
+
+        Returns:
+            Manifest ID string
+        """
+        return self.manifest.get("manifest_id", "")
+
+    def set_parent(self, parent_manifest_id: str) -> None:
+        """
+        Set a single parent manifest for this manifest.
+
+        This is the common case for 0.7.x (linear history).
+        For merge operations (0.8.x+), use add_parent() instead.
+
+        Args:
+            parent_manifest_id: ID of the parent manifest
+        """
+        self.manifest["parent_ids"] = [parent_manifest_id]
+        self._update_lineage()
+
+    def add_parent(self, parent_manifest_id: str) -> None:
+        """
+        Add a parent manifest to this manifest's parent list.
+
+        Used for merge operations where a manifest has multiple parents.
+        For single-parent operations, use set_parent() instead.
+
+        Args:
+            parent_manifest_id: ID of the parent manifest to add
+        """
+        if "parent_ids" not in self.manifest:
+            self.manifest["parent_ids"] = []
+        if parent_manifest_id not in self.manifest["parent_ids"]:
+            self.manifest["parent_ids"].append(parent_manifest_id)
+        self._update_lineage()
+
+    def get_parent_ids(self) -> List[str]:
+        """
+        Get the list of parent manifest IDs.
+
+        Returns:
+            List of parent manifest IDs (empty if this is a root manifest)
+        """
+        return self.manifest.get("parent_ids", [])
+
+    def has_parents(self) -> bool:
+        """
+        Check if this manifest has any parents.
+
+        Returns:
+            True if this manifest has at least one parent
+        """
+        return len(self.get_parent_ids()) > 0
+
+    def is_merge(self) -> bool:
+        """
+        Check if this manifest is a merge (has multiple parents).
+
+        Returns:
+            True if this manifest has more than one parent
+        """
+        return len(self.get_parent_ids()) > 1
+
+    def get_lineage(self) -> Dict[str, Any]:
+        """
+        Get lineage information for this manifest.
+
+        Returns:
+            Dictionary with root_id, depth, and is_merge fields
+        """
+        return self.manifest.get("lineage", {
+            "root_id": self.get_manifest_id(),
+            "depth": 0,
+            "is_merge": False
+        })
+
+    def _update_lineage(self) -> None:
+        """
+        Update lineage helper fields based on current parent_ids.
+
+        Note: In 0.7.x, we don't traverse the full DAG to compute
+        accurate depth/root_id. That's a 0.8.x enhancement.
+        """
+        parent_ids = self.get_parent_ids()
+        self.manifest["lineage"] = {
+            "root_id": self.manifest.get("lineage", {}).get("root_id"),
+            "depth": len(parent_ids),  # Simplified for now
+            "is_merge": len(parent_ids) > 1
+        }
+
+    def incorporate_file(
+        self,
+        file_id: str,
+        source_path: str,
+        dest_path: str,
+        hashes: Dict[str, str],
+        original_manifest_id: Optional[str] = None,
+        original_source_path: Optional[str] = None
+    ) -> str:
+        """
+        Incorporate an existing file into this manifest without copying.
+
+        Used for identical files that already exist at the destination.
+        The file is added to the manifest with its current hash values
+        and optionally linked to its original manifest/source.
+
+        Args:
+            file_id: ID for the file entry (typically dest_path)
+            source_path: Current source path (what user specified)
+            dest_path: Destination path where file already exists
+            hashes: Hash values of the file (must match)
+            original_manifest_id: ID of manifest where file was first tracked
+            original_source_path: Original source path from first operation
+
+        Returns:
+            The file ID used to reference this file
+        """
+        # Create file entry
+        file_entry = {
+            "source_path": source_path,
+            "destination_path": dest_path,
+            "added_at": datetime.datetime.now().isoformat(),
+            "incorporated": True,  # Flag indicating not copied, but incorporated
+            "hashes": hashes,
+            "history": []
+        }
+
+        # Add lineage info if available
+        if original_manifest_id or original_source_path:
+            file_entry["lineage"] = {
+                "original_manifest_id": original_manifest_id,
+                "original_source_path": original_source_path
+            }
+
+        self.manifest["files"][file_id] = file_entry
+        return file_id
 
 
 def calculate_file_hash(

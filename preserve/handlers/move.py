@@ -21,6 +21,15 @@ from pathlib import Path
 from preservelib import operations
 from preservelib import links
 from preservelib.operations import InsufficientSpaceError, PermissionCheckError
+from preservelib.destination import (
+    scan_destination,
+    format_scan_report,
+    ConflictResolution,
+)
+from preservelib.path_warnings import (
+    check_path_mode_warnings,
+    prompt_path_warning,
+)
 from preserve.utils import (
     find_files_from_args,
     get_hash_algorithms,
@@ -143,6 +152,81 @@ def handle_move_operation(args, logger):
     if hasattr(args, 'ignore') and args.ignore:
         ignore_checks = [x.strip().lower() for x in args.ignore.split(',')]
 
+    # Check for path mode warnings (Issue #42)
+    skip_path_warning = getattr(args, 'no_path_warning', False) or getattr(args, 'trust_path_mode', False)
+    if not skip_path_warning and args.sources:
+        # Use first source for warning detection
+        source_for_check = args.sources[0]
+        warnings = check_path_mode_warnings(
+            source_path=source_for_check,
+            dest_path=str(dest_path),
+            path_style=path_style,
+            include_base=include_base,
+        )
+        for warning in warnings:
+            should_continue, _ = prompt_path_warning(warning, source_for_check)
+            if not should_continue:
+                return 1
+
+    # Handle --scan-only mode (0.7.x destination awareness)
+    scan_only = getattr(args, 'scan_only', False)
+    scan_verbose = getattr(args, 'scan_verbose', False)
+
+    # Determine source_base for directory operations
+    source_base = None
+    if args.srchPath:
+        source_base = args.srchPath[0]
+    elif args.sources and len(args.sources) == 1:
+        src_path = Path(args.sources[0])
+        if src_path.is_dir() and args.recursive:
+            source_base = str(src_path)
+
+    if scan_only or dest_path.exists():
+        # Perform destination scan for awareness
+        logger.info("Scanning destination for existing files...")
+
+        scan_result = scan_destination(
+            source_files=source_files,
+            dest_base=dest_path,
+            path_style=path_style,
+            source_base=source_base,
+            include_base=include_base,
+            hash_algorithm=hash_algorithms[0],
+            quick_check=True,
+            scan_extra_dest_files=True,
+        )
+
+        if scan_only:
+            # Just print the report and exit
+            print(format_scan_report(scan_result, verbose=scan_verbose or args.verbose > 0))
+
+            # Provide guidance based on results
+            if scan_result.has_conflicts():
+                print("")
+                print("To proceed with conflicts, use one of:")
+                print("  --on-conflict=skip      Keep destination files (skip conflicting)")
+                print("  --on-conflict=overwrite Replace with source files")
+                print("  --on-conflict=newer     Keep whichever is newer")
+                print("  --on-conflict=rename    Keep both (rename source)")
+            if scan_result.identical_count > 0:
+                print("")
+                print("To skip identical files and save time:")
+                print("  --incorporate-identical  Skip moving, add to manifest only")
+
+            return 0
+
+        # Log scan results for non-scan-only mode
+        if scan_result.has_pre_existing():
+            logger.info(f"Destination scan: {scan_result.identical_count} identical, "
+                       f"{scan_result.conflict_count} conflicts, "
+                       f"{scan_result.dest_only_count} pre-existing")
+
+    # Get incorporate_identical flag (0.7.x)
+    incorporate_identical = getattr(args, 'incorporate_identical', False)
+
+    # Get on_conflict flag (0.7.x)
+    on_conflict = getattr(args, 'on_conflict', None)
+
     # Define prompt callback for soft warnings (interactive mode)
     def prompt_on_warning(issues):
         """Prompt user to continue on soft warnings. Returns True to continue."""
@@ -164,7 +248,7 @@ def handle_move_operation(args, logger):
     options = {
         'path_style': path_style,
         'include_base': include_base,
-        'source_base': args.srchPath[0] if args.srchPath else None,
+        'source_base': source_base,
         'overwrite': args.overwrite if hasattr(args, 'overwrite') else False,
         'preserve_attrs': not args.no_preserve_attrs if hasattr(args, 'no_preserve_attrs') else True,
         'verify': not args.no_verify if hasattr(args, 'no_verify') else True,
@@ -178,6 +262,10 @@ def handle_move_operation(args, logger):
         'ignore_space_warning': 'space' in ignore_checks,
         'check_permissions': 'permissions' not in ignore_checks,
         'prompt_on_warning': prompt_on_warning,
+        # 0.7.x Destination awareness options
+        'incorporate_identical': incorporate_identical,
+        'scan_result': scan_result if 'scan_result' in locals() else None,
+        'on_conflict': on_conflict,
     }
 
     # Create command line for logging
@@ -239,6 +327,10 @@ def handle_move_operation(args, logger):
     print(f"  Copy failed:      {result.failure_count()}")
     print(f"  Skipped:          {result.skip_count()}")
 
+    # Print incorporated files count (0.7.x)
+    if result.incorporated_count() > 0:
+        print(f"  Incorporated:     {result.incorporated_count()} (identical, not moved)")
+
     if options['verify']:
         print(f"  Verified:         {result.verified_count()}")
 
@@ -249,6 +341,8 @@ def handle_move_operation(args, logger):
         print(f"  COPIED ONLY (source file retained):      {retained_count}")
 
     print(f"\n  Total bytes: {format_bytes_detailed(result.total_bytes)}")
+    if result.incorporated_bytes > 0:
+        print(f"  Bytes incorporated: {format_bytes_detailed(result.incorporated_bytes)}")
 
     # Determine if move was successful
     move_success = (result.failure_count() == 0 and

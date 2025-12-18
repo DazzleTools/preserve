@@ -38,7 +38,8 @@ from .handlers import (
     handle_move_operation,
     handle_verify_operation,
     handle_restore_operation,
-    handle_config_operation
+    handle_config_operation,
+    handle_cleanup_operation
 )
 
 # Import from preservelib for backward compatibility with tests
@@ -265,6 +266,8 @@ For more examples, use --help with a specific operation""")
             return handle_verify_operation(args, logger)
         elif args.operation == 'RESTORE':
             return handle_restore_operation(args, logger)
+        elif args.operation == 'CLEANUP':
+            return handle_cleanup_operation(args, logger)
         elif args.operation == 'CONFIG':
             return handle_config_operation(args, logger)
         else:

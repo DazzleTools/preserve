@@ -100,6 +100,8 @@ Note: When copying directories, --recursive (-r) is required to include files in
     _add_verification_args(copy_parser)
     _add_dazzlelink_args(copy_parser)
     _add_safety_args(copy_parser)
+    _add_warning_args(copy_parser)
+    _add_destination_aware_args(copy_parser)
     copy_parser.add_argument('--dry-run', action='store_true',
                             help='Show what would be done without making changes')
     copy_parser.add_argument('--overwrite', action='store_true',
@@ -140,6 +142,8 @@ Note: When moving directories, --recursive (-r) is required to include files in 
     _add_verification_args(move_parser)
     _add_dazzlelink_args(move_parser)
     _add_safety_args(move_parser)
+    _add_warning_args(move_parser)
+    _add_destination_aware_args(move_parser)
     move_parser.add_argument('--dry-run', action='store_true',
                             help='Show what would be done without making changes')
     move_parser.add_argument('--overwrite', action='store_true',
@@ -241,6 +245,48 @@ Note: When moving directories, --recursive (-r) is required to include files in 
                                help='Only restore files matching pattern (e.g., "*.txt" or "path/to/*")')
 
     _add_dazzlelink_args(restore_parser)
+
+    # === CLEANUP operation (0.7.x - Issue #43) ===
+    cleanup_parser = subparsers.add_parser('CLEANUP',
+                                          parents=[common_parent],
+                                          help='Recover from partial MOVE operations',
+                                          description='Clean up after a partial or failed MOVE operation. '
+                                                     'Can complete an interrupted move or rollback to original state.',
+                                          epilog='''Examples:
+
+1. Show status of incomplete operation (safe - dry-run is default):
+   preserve CLEANUP --src "D:/backup/data"
+
+2. Complete interrupted MOVE (copy remaining files, delete verified sources):
+   preserve CLEANUP --src "D:/backup/data" --mode complete --execute
+
+3. Rollback to original state (move files back to source):
+   preserve CLEANUP --src "D:/backup/data" --mode rollback --execute
+
+4. Complete operation, keeping any extra destination files:
+   preserve CLEANUP --src "D:/backup/data" --mode complete --keep-extra --execute
+
+Note: CLEANUP operations are DRY-RUN by default. Use --execute to perform actions.''',
+                                          formatter_class=argparse.RawDescriptionHelpFormatter)
+    cleanup_parser.add_argument('--src',
+                               help='Path to preserved files directory containing manifest(s)')
+    cleanup_parser.add_argument('--manifest', '-m',
+                               help='Direct path to manifest file for the incomplete operation')
+    cleanup_parser.add_argument('--number', '-n', type=int,
+                               help='Select manifest by number (e.g., -n 2 for preserve_manifest_002.json)')
+    cleanup_parser.add_argument('--mode',
+                               choices=['complete', 'rollback', 'status'],
+                               default='status',
+                               help='Cleanup mode: complete (finish move), rollback (undo move), '
+                                    'status (show what would happen). Default: status')
+    cleanup_parser.add_argument('--execute', action='store_true',
+                               help='Actually perform the cleanup operation (default is dry-run)')
+    cleanup_parser.add_argument('--keep-extra', action='store_true',
+                               help='In complete mode, keep extra files found at destination '
+                                    'that are not in the manifest')
+    cleanup_parser.add_argument('--force', action='store_true',
+                               help='Force cleanup even if some operations may fail')
+    _add_verification_args(cleanup_parser)
 
     # === CONFIG operation ===
     config_parser = subparsers.add_parser('CONFIG',
@@ -372,6 +418,50 @@ def _add_safety_args(parser):
                                   'Values: space (low disk space warnings), '
                                   'permissions (skip permission pre-checks). '
                                   'Example: --ignore space,permissions')
+
+
+def _add_warning_args(parser):
+    """Add path mode warning arguments to a parser (Issue #42)"""
+    warning_group = parser.add_argument_group('Warning options')
+    warning_group.add_argument('--no-path-warning', action='store_true',
+                              help='Skip path mode sanity checks. '
+                                   'Suppress warnings about likely mistakes with --abs/--rel paths.')
+    warning_group.add_argument('--trust-path-mode', action='store_true',
+                              help='Same as --no-path-warning. '
+                                   'Trust that path mode settings are intentional.')
+
+
+def _add_destination_aware_args(parser):
+    """Add destination-awareness arguments for 0.7.x features (Issue #39)"""
+    dest_aware_group = parser.add_argument_group('Destination awareness options (0.7.x)')
+
+    # Scan-only mode
+    dest_aware_group.add_argument('--scan-only', action='store_true',
+                                  help='Analyze destination and report current state: which files '
+                                       'already exist, which would conflict (different content), '
+                                       'which are identical (same hash). Unlike --dry-run which '
+                                       'simulates the operation, --scan-only examines what\'s '
+                                       'actually at the destination before deciding to proceed.')
+
+    # Conflict resolution
+    dest_aware_group.add_argument('--on-conflict',
+                                  choices=['skip', 'overwrite', 'newer', 'larger', 'rename', 'fail', 'ask'],
+                                  default=None,
+                                  metavar='MODE',
+                                  help='How to handle conflicting files at destination: '
+                                       'skip (keep dest), overwrite (replace), newer (keep newer), '
+                                       'larger (keep larger), rename (keep both), fail (abort), '
+                                       'ask (prompt). Default: skip unless --overwrite is set.')
+
+    # Incorporate identical files
+    dest_aware_group.add_argument('--incorporate-identical', action='store_true',
+                                  help='Skip copying files that already exist at destination with '
+                                       'identical content (same hash). The existing file is '
+                                       '"incorporated" into the manifest without copying.')
+
+    # Verbose scan output
+    dest_aware_group.add_argument('--scan-verbose', action='store_true',
+                                  help='Show detailed file listings in scan report')
 
 
 def display_help_with_examples(parser, args):

@@ -31,6 +31,13 @@ except ImportError:
 
 from .manifest import PreserveManifest, calculate_file_hash, verify_file_hash
 from .metadata import collect_file_metadata, apply_file_metadata
+from .destination import (
+    ConflictResolution,
+    FileCategory,
+    apply_conflict_resolution,
+    generate_renamed_path,
+    compare_files,
+)
 
 # Set up module-level logger
 logger = logging.getLogger(__name__)
@@ -365,10 +372,12 @@ class OperationResult:
         self.skipped = []  # List of skipped file paths
         self.verified = []  # List of verified file paths
         self.unverified = []  # List of unverified file paths
+        self.incorporated = []  # List of incorporated (identical) file paths (0.7.x)
         self.manifest = None  # Operation manifest
         self.start_time = None  # Operation start time
         self.end_time = None  # Operation end time
         self.total_bytes = 0  # Total bytes processed
+        self.incorporated_bytes = 0  # Total bytes incorporated (0.7.x)
         self.error_messages = {}  # Map of file paths to error messages
 
     def add_success(self, source_path: str, dest_path: str, size: int = 0) -> None:
@@ -406,6 +415,21 @@ class OperationResult:
         """
         self.skipped.append((source_path, dest_path))
         self.error_messages[source_path] = reason
+
+    def add_incorporated(self, source_path: str, dest_path: str, size: int = 0) -> None:
+        """
+        Add an incorporated file (identical file already at destination).
+
+        This is for files that exist at the destination with identical content.
+        They are added to the manifest without copying.
+
+        Args:
+            source_path: Source file path
+            dest_path: Destination file path where identical file exists
+            size: File size in bytes
+        """
+        self.incorporated.append((source_path, dest_path))
+        self.incorporated_bytes += size
 
     def add_verification(
         self, path: str, verified: bool, details: Optional[Any] = None
@@ -455,6 +479,10 @@ class OperationResult:
         """Get the number of skipped operations."""
         return len(self.skipped)
 
+    def incorporated_count(self) -> int:
+        """Get the number of incorporated files (0.7.x)."""
+        return len(self.incorporated)
+
     def verified_count(self) -> int:
         """Get the number of verified files."""
         return len(self.verified)
@@ -465,7 +493,7 @@ class OperationResult:
 
     def total_count(self) -> int:
         """Get the total number of files processed."""
-        return self.success_count() + self.failure_count() + self.skip_count()
+        return self.success_count() + self.failure_count() + self.skip_count() + self.incorporated_count()
 
     def is_success(self) -> bool:
         """
@@ -493,10 +521,12 @@ class OperationResult:
             "success_count": self.success_count(),
             "failure_count": self.failure_count(),
             "skip_count": self.skip_count(),
+            "incorporated_count": self.incorporated_count(),
             "verified_count": self.verified_count(),
             "unverified_count": self.unverified_count(),
             "total_count": self.total_count(),
             "total_bytes": self.total_bytes,
+            "incorporated_bytes": self.incorporated_bytes,
             "start_time": self.start_time,
             "end_time": self.end_time,
             "success": self.is_success(),
@@ -540,6 +570,11 @@ def copy_operation(
         "check_permissions": True,  # Pre-flight permission check
         "space_safety_margin": 0.05,  # 5% of transfer size as buffer
         "ignore_space_warning": False,  # Whether to ignore soft space warnings
+        # 0.7.x Destination awareness options
+        "incorporate_identical": False,  # Skip copying identical files, add to manifest only
+        "scan_result": None,  # Pre-computed destination scan result
+        "parent_manifest_id": None,  # ID of parent manifest for DAG linkage
+        "on_conflict": None,  # Conflict resolution strategy (skip, overwrite, newer, larger, rename, fail)
     }
 
     # Merge with provided options
@@ -599,8 +634,16 @@ def copy_operation(
 
     # Create manifest
     manifest = PreserveManifest()
+
+    # Set parent manifest if provided (0.7.x DAG linkage)
+    if options.get("parent_manifest_id"):
+        manifest.set_parent(options["parent_manifest_id"])
+        logger.debug(f"Linked to parent manifest: {options['parent_manifest_id']}")
+
     # Filter out non-serializable options (like callback functions) for manifest
-    manifest_options = {k: v for k, v in options.items() if not callable(v)}
+    # Also filter out scan_result as it's not serializable
+    manifest_options = {k: v for k, v in options.items()
+                       if not callable(v) and k != 'scan_result'}
     operation_id = manifest.add_operation(
         operation_type="COPY",
         source_path=",".join(str(s) for s in source_files),
@@ -608,6 +651,16 @@ def copy_operation(
         options=manifest_options,
         command_line=command_line,
     )
+
+    # Build lookup for identical files from scan_result (0.7.x)
+    identical_files_lookup = {}
+    if options.get("incorporate_identical") and options.get("scan_result"):
+        scan_result = options["scan_result"]
+        for comparison in scan_result.identical:
+            # Map source path to the comparison object
+            source_key = str(comparison.source_path)
+            identical_files_lookup[source_key] = comparison
+        logger.info(f"Found {len(identical_files_lookup)} identical files that can be incorporated")
 
     # Ensure destination directory exists
     dest_base_path = Path(dest_base)
@@ -738,6 +791,37 @@ def copy_operation(
         if not source_path.is_file():
             result.add_skip(str(source_path), "", "Source is not a file")
             continue
+
+        # Check if this file should be incorporated (0.7.x identical file handling)
+        source_key = str(source_path)
+        if source_key in identical_files_lookup:
+            comparison = identical_files_lookup[source_key]
+            dest_path = comparison.dest_path
+            file_size = comparison.source_size or 0
+
+            if options["dry_run"]:
+                logger.info(f"[DRY RUN] Would incorporate identical file: {source_path} -> {dest_path}")
+                result.add_incorporated(str(source_path), str(dest_path), file_size)
+            else:
+                # Incorporate the file: add to manifest without copying
+                file_hashes = {}
+                if comparison.source_hash:
+                    file_hashes[options["hash_algorithm"]] = comparison.source_hash
+
+                manifest.incorporate_file(
+                    file_id=str(dest_path),
+                    source_path=str(source_path),
+                    dest_path=str(dest_path),
+                    hashes=file_hashes,
+                )
+
+                result.add_incorporated(str(source_path), str(dest_path), file_size)
+                logger.info(f"Incorporated identical file: {source_path} -> {dest_path}")
+
+                # Mark as verified since hashes already match
+                result.add_verification(str(dest_path), True, {"incorporated": True})
+
+            continue  # Skip to next file, don't copy
 
         try:
             # Determine destination path
@@ -1147,14 +1231,91 @@ def copy_operation(
             # Create parent directories
             dest_path.parent.mkdir(parents=True, exist_ok=True)
 
-            # Check if destination exists
-            if dest_path.exists() and not options["overwrite"]:
-                result.add_skip(
-                    str(source_path),
-                    str(dest_path),
-                    "Destination exists and overwrite not enabled",
-                )
-                continue
+            # Check if destination exists and handle conflict resolution (0.7.x)
+            if dest_path.exists():
+                # Determine conflict resolution strategy
+                on_conflict = options.get("on_conflict")
+                if on_conflict:
+                    # Convert string to ConflictResolution enum if needed
+                    if isinstance(on_conflict, str):
+                        on_conflict = ConflictResolution(on_conflict.lower())
+                elif options["overwrite"]:
+                    # Backward compatibility: --overwrite means OVERWRITE
+                    on_conflict = ConflictResolution.OVERWRITE
+                else:
+                    # Default to SKIP
+                    on_conflict = ConflictResolution.SKIP
+
+                # Handle FAIL mode - abort the entire operation
+                if on_conflict == ConflictResolution.FAIL:
+                    error_msg = f"Conflict detected: {dest_path} already exists (--on-conflict=fail)"
+                    logger.error(error_msg)
+                    result.add_failure(str(source_path), str(dest_path), error_msg)
+                    # Stop processing all files
+                    break
+
+                # Handle ASK mode - for now, log a warning and skip
+                # Full interactive support would require CLI integration
+                if on_conflict == ConflictResolution.ASK:
+                    logger.warning(f"Interactive conflict resolution not yet implemented. Skipping: {dest_path}")
+                    result.add_skip(str(source_path), str(dest_path), "Interactive resolution not available")
+                    continue
+
+                # For NEWER and LARGER, we need file metadata
+                if on_conflict in (ConflictResolution.NEWER, ConflictResolution.LARGER):
+                    try:
+                        source_stat = source_path.stat()
+                        dest_stat = dest_path.stat()
+
+                        if on_conflict == ConflictResolution.NEWER:
+                            if source_stat.st_mtime <= dest_stat.st_mtime:
+                                result.add_skip(
+                                    str(source_path),
+                                    str(dest_path),
+                                    f"Destination is newer (src={source_stat.st_mtime:.0f}, dst={dest_stat.st_mtime:.0f})",
+                                )
+                                continue
+                            else:
+                                logger.info(f"Source is newer, overwriting: {dest_path}")
+                                on_conflict = ConflictResolution.OVERWRITE
+
+                        elif on_conflict == ConflictResolution.LARGER:
+                            if source_stat.st_size <= dest_stat.st_size:
+                                result.add_skip(
+                                    str(source_path),
+                                    str(dest_path),
+                                    f"Destination is larger (src={source_stat.st_size}, dst={dest_stat.st_size})",
+                                )
+                                continue
+                            else:
+                                logger.info(f"Source is larger, overwriting: {dest_path}")
+                                on_conflict = ConflictResolution.OVERWRITE
+
+                    except OSError as e:
+                        logger.warning(f"Could not stat files for comparison: {e}")
+                        result.add_skip(str(source_path), str(dest_path), f"Stat error: {e}")
+                        continue
+
+                # Handle RENAME mode - generate a new destination path
+                if on_conflict == ConflictResolution.RENAME:
+                    original_dest = dest_path
+                    dest_path = generate_renamed_path(dest_path)
+                    logger.info(f"Conflict resolved by rename: {original_dest.name} -> {dest_path.name}")
+                    # Ensure parent directory exists for renamed path
+                    dest_path.parent.mkdir(parents=True, exist_ok=True)
+
+                # Handle SKIP mode
+                elif on_conflict == ConflictResolution.SKIP:
+                    result.add_skip(
+                        str(source_path),
+                        str(dest_path),
+                        "Destination exists (--on-conflict=skip)",
+                    )
+                    continue
+
+                # OVERWRITE mode - proceed with copy (shutil.copy2 will overwrite)
+                elif on_conflict == ConflictResolution.OVERWRITE:
+                    logger.debug(f"Overwriting existing file: {dest_path}")
 
             # Enhanced debug output for path resolution in relative mode
             if options["path_style"] == "relative":

@@ -5,7 +5,9 @@
 [![License](https://img.shields.io/badge/license-GPL%20v3-green.svg)](https://www.gnu.org/licenses/gpl-3.0.html)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)]()
 
-A cross-platform file preservation tool with path normalization, verification, and restoration capabilities.
+> **Track files and always get them back to where you need them.**
+
+A cross-platform file preservation tool with path normalization, verification, and restoration capabilities. Preserve tracks where your files came from so you can always restore them - whether to their original location or anywhere else you need them.
 
 ## Why another backup tool?
 

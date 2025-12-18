@@ -144,9 +144,12 @@ credentials.json
 /test-runs/
 /MagicMock/
 
-.claude/
 tests/audits/
 
 # GitRepoKit version management
 preserve/version.py.backup
 *.py.backup
+
+# Claude files
+CLAUDE.md
+.claude/

@@ -18,6 +18,15 @@ from pathlib import Path
 
 from preservelib import operations
 from preservelib.operations import InsufficientSpaceError, PermissionCheckError
+from preservelib.destination import (
+    scan_destination,
+    format_scan_report,
+    ConflictResolution,
+)
+from preservelib.path_warnings import (
+    check_path_mode_warnings,
+    prompt_path_warning,
+)
 from preserve.utils import (
     find_files_from_args,
     get_hash_algorithms,
@@ -246,6 +255,72 @@ def handle_copy_operation(args, logger):
     if hasattr(args, 'ignore') and args.ignore:
         ignore_checks = [x.strip().lower() for x in args.ignore.split(',')]
 
+    # Check for path mode warnings (Issue #42)
+    skip_path_warning = getattr(args, 'no_path_warning', False) or getattr(args, 'trust_path_mode', False)
+    if not skip_path_warning and args.sources:
+        # Use first source for warning detection
+        source_for_check = args.sources[0]
+        warnings = check_path_mode_warnings(
+            source_path=source_for_check,
+            dest_path=str(dest_path),
+            path_style=path_style,
+            include_base=include_base,
+        )
+        for warning in warnings:
+            should_continue, _ = prompt_path_warning(warning, source_for_check)
+            if not should_continue:
+                return 1
+
+    # Handle --scan-only mode (0.7.x destination awareness)
+    scan_only = getattr(args, 'scan_only', False)
+    scan_verbose = getattr(args, 'scan_verbose', False)
+
+    if scan_only or dest_path.exists():
+        # Perform destination scan for awareness
+        logger.info("Scanning destination for existing files...")
+
+        scan_result = scan_destination(
+            source_files=source_files,
+            dest_base=dest_path,
+            path_style=path_style,
+            source_base=source_base,
+            include_base=include_base,
+            hash_algorithm=hash_algorithms[0],
+            quick_check=True,
+            scan_extra_dest_files=True,
+        )
+
+        if scan_only:
+            # Just print the report and exit
+            print(format_scan_report(scan_result, verbose=scan_verbose or args.verbose > 0))
+
+            # Provide guidance based on results
+            if scan_result.has_conflicts():
+                print("")
+                print("To proceed with conflicts, use one of:")
+                print("  --on-conflict=skip      Keep destination files (skip conflicting)")
+                print("  --on-conflict=overwrite Replace with source files")
+                print("  --on-conflict=newer     Keep whichever is newer")
+                print("  --on-conflict=rename    Keep both (rename source)")
+            if scan_result.identical_count > 0:
+                print("")
+                print("To skip identical files and save time:")
+                print("  --incorporate-identical  Skip copying, add to manifest only")
+
+            return 0
+
+        # Log scan results for non-scan-only mode
+        if scan_result.has_pre_existing():
+            logger.info(f"Destination scan: {scan_result.identical_count} identical, "
+                       f"{scan_result.conflict_count} conflicts, "
+                       f"{scan_result.dest_only_count} pre-existing")
+
+    # Get incorporate_identical flag (0.7.x)
+    incorporate_identical = getattr(args, 'incorporate_identical', False)
+
+    # Get on_conflict flag (0.7.x)
+    on_conflict = getattr(args, 'on_conflict', None)
+
     # Prepare operation options
     options = {
         'path_style': path_style,
@@ -261,6 +336,10 @@ def handle_copy_operation(args, logger):
         'dry_run': args.dry_run if hasattr(args, 'dry_run') else False,
         'ignore_space_warning': 'space' in ignore_checks,
         'check_permissions': 'permissions' not in ignore_checks,
+        # 0.7.x Destination awareness options
+        'incorporate_identical': incorporate_identical,
+        'scan_result': scan_result if 'scan_result' in locals() else None,
+        'on_conflict': on_conflict,
     }
 
     # Create command line for logging
@@ -296,6 +375,10 @@ def handle_copy_operation(args, logger):
     print(f"  Failed: {result.failure_count()}")
     print(f"  Skipped: {result.skip_count()}")
 
+    # Print incorporated files count (0.7.x)
+    if result.incorporated_count() > 0:
+        print(f"  Incorporated: {result.incorporated_count()} (identical, not copied)")
+
     # Print detailed skipped file info if there are skipped files
     if result.skip_count() > 0:
         print("\nSkipped Files (all):")
@@ -308,7 +391,9 @@ def handle_copy_operation(args, logger):
         print(f"  Verified: {result.verified_count()}")
         print(f"  Unverified: {result.unverified_count()}")
 
-    print(f"  Total bytes: {format_bytes_detailed(result.total_bytes)}")
+    print(f"  Total bytes copied: {format_bytes_detailed(result.total_bytes)}")
+    if result.incorporated_bytes > 0:
+        print(f"  Bytes incorporated: {format_bytes_detailed(result.incorporated_bytes)}")
 
     # Return success if no failures and (no verification or all verified)
     return 0 if (result.failure_count() == 0 and
