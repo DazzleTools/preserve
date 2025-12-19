@@ -102,9 +102,6 @@ Add --includeBase to include the source folder name.
 ```bash
 # Skip all path mode warnings
 preserve COPY src -r --abs --dst dest --no-path-warning
-
-# Alias for --no-path-warning
-preserve COPY src -r --abs --dst dest --trust-path-mode
 ```
 
 ## CLEANUP Command (v0.7.x)
@@ -171,7 +168,6 @@ preserve CLEANUP dest --mode rollback
 | `--incorporate-identical` | COPY, MOVE | Resume interrupted operations |
 | `--scan-only` | COPY, MOVE | Analyze without executing |
 | `--no-path-warning` | COPY, MOVE | Skip path mode warnings |
-| `--trust-path-mode` | COPY, MOVE | Alias for --no-path-warning |
 
 ### New Commands in v0.7.x
 

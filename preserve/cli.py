@@ -426,9 +426,6 @@ def _add_warning_args(parser):
     warning_group.add_argument('--no-path-warning', action='store_true',
                               help='Skip path mode sanity checks. '
                                    'Suppress warnings about likely mistakes with --abs/--rel paths.')
-    warning_group.add_argument('--trust-path-mode', action='store_true',
-                              help='Same as --no-path-warning. '
-                                   'Trust that path mode settings are intentional.')
 
 
 def _add_destination_aware_args(parser):

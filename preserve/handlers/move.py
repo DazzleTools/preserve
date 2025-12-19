@@ -153,7 +153,7 @@ def handle_move_operation(args, logger):
         ignore_checks = [x.strip().lower() for x in args.ignore.split(',')]
 
     # Check for path mode warnings (Issue #42)
-    skip_path_warning = getattr(args, 'no_path_warning', False) or getattr(args, 'trust_path_mode', False)
+    skip_path_warning = getattr(args, 'no_path_warning', False)
     if not skip_path_warning and args.sources:
         # Use first source for warning detection
         source_for_check = args.sources[0]
