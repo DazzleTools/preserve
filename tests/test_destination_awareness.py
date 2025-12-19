@@ -1016,5 +1016,81 @@ class TestOnConflictFail(unittest.TestCase):
         self.assertFalse((self.dst / "b.txt").exists())
 
 
+class TestScanOnlyNoSideEffects(unittest.TestCase):
+    """Test that --scan-only mode has no filesystem side effects."""
+
+    def setUp(self):
+        """Set up test environment."""
+        self.test_dir = Path(tempfile.mkdtemp(prefix='test_scan_only_'))
+        self.src = self.test_dir / "src"
+        self.dst = self.test_dir / "dst"
+        self.src.mkdir()
+        self.dst.mkdir()
+
+    def tearDown(self):
+        """Clean up test environment."""
+        shutil.rmtree(self.test_dir, ignore_errors=True)
+
+    def test_scan_only_does_not_migrate_manifest(self):
+        """--scan-only should not trigger manifest migration.
+
+        Bug: get_manifest_path() was migrating preserve_manifest.json to
+        preserve_manifest_001.json even during --scan-only operations.
+        This violates the read-only contract of scan-only mode.
+        """
+        from preserve.utils import get_manifest_path
+        from argparse import Namespace
+
+        # Create a single manifest (simulating first operation completed)
+        manifest = self.dst / "preserve_manifest.json"
+        manifest.write_text('{"version": "3.0", "files": {}}')
+
+        # Create args with scan_only=True
+        args = Namespace(
+            dst=str(self.dst),
+            manifest=None,
+            no_manifest=False,
+            scan_only=True,
+        )
+
+        # Call get_manifest_path - this should NOT migrate the manifest
+        result_path = get_manifest_path(args, self.dst)
+
+        # Original manifest should still exist (not renamed)
+        self.assertTrue(manifest.exists(),
+            "preserve_manifest.json should NOT be migrated during --scan-only")
+
+        # Should not have created _001
+        self.assertFalse((self.dst / "preserve_manifest_001.json").exists(),
+            "preserve_manifest_001.json should NOT be created during --scan-only")
+
+        # Return path should be what WOULD be used for next operation
+        self.assertEqual(result_path.name, "preserve_manifest_002.json",
+            "Should return _002 path (what would be used if not scan-only)")
+
+    def test_scan_only_with_no_existing_manifest(self):
+        """--scan-only with no existing manifest should not create one."""
+        from preserve.utils import get_manifest_path
+        from argparse import Namespace
+
+        # No manifest exists
+        args = Namespace(
+            dst=str(self.dst),
+            manifest=None,
+            no_manifest=False,
+            scan_only=True,
+        )
+
+        # Call get_manifest_path
+        result_path = get_manifest_path(args, self.dst)
+
+        # Should return path for first manifest
+        self.assertEqual(result_path.name, "preserve_manifest.json")
+
+        # But should NOT have created it
+        self.assertFalse(result_path.exists(),
+            "Manifest file should NOT be created during --scan-only")
+
+
 if __name__ == '__main__':
     unittest.main()

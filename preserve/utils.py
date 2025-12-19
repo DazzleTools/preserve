@@ -880,7 +880,13 @@ def get_manifest_path(args, preserve_dir):
         # Check if we also have numbered manifests
         numbered = list(dest.glob('preserve_manifest_[0-9][0-9][0-9]*.json'))
         if not numbered:
-            # This is the second operation - migrate the single manifest
+            # This would be the second operation - migrate the single manifest
+            # But only if this isn't a read-only operation like --scan-only
+            scan_only = getattr(args, 'scan_only', False)
+            if scan_only:
+                # Don't migrate during scan-only, just return what would be used
+                return dest / 'preserve_manifest_002.json'
+
             new_001 = dest / 'preserve_manifest_001.json'
             print(f"Migrating {single_manifest.name} to {new_001.name}")
             try:

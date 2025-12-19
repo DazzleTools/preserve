@@ -6,6 +6,43 @@ All notable changes to this project will be documented in this file. This projec
 
 ## [Unreleased]
 
+## [0.7.1] - 2025-12-18
+
+### Fixed
+- **`--scan-only` manifest migration bug** - Scan-only mode was incorrectly triggering manifest migration (renaming `preserve_manifest.json` to `preserve_manifest_001.json`), violating the read-only contract
+
+### Removed
+- **`--trust-path-mode` alias** - Redundant alias for `--no-path-warning` removed to simplify CLI
+
+### Added
+- Unit tests for scan-only side effects
+
+## [0.7.0] - 2025-12-18
+
+### Added
+- **Destination Awareness** (#39)
+  - Pre-operation destination scanning to detect conflicts before COPY/MOVE
+  - `--scan-only` mode to analyze destination without executing
+  - `--incorporate-identical` to resume interrupted operations by marking matching files
+  - `--on-conflict` modes: `skip`, `overwrite`, `newer`, `larger`, `rename`, `fail`, `ask`
+  - Detailed scan reports showing what would happen before proceeding
+- **CLEANUP Command** (#43)
+  - Recover from interrupted MOVE operations
+  - `--mode status` - Analyze partial move state
+  - `--mode complete` - Finish interrupted move
+  - `--mode rollback` - Undo partial move
+  - `--dry-run` for safe previewing
+- **Smart Path Mode Warnings** (#42)
+  - Detects common mistakes with `--abs` and `--rel` path modes
+  - Visual preview of what would happen with current settings
+  - `--no-path-warning` to suppress when intentional
+- **Documentation**
+  - `docs/cli-reference.md` - CLI reference for v0.7.x features
+  - `ROADMAP.md` - Development roadmap
+
+### Changed
+- Test organization: moved non-unittest files to `tests/one-offs/`
+
 ## [0.6.2] - 2025-12-17
 
 ### Added
