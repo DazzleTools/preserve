@@ -6,6 +6,14 @@ All notable changes to this project will be documented in this file. This projec
 
 ## [Unreleased]
 
+### Added
+- **Path Cycle Detection** (#47)
+  - Prevents catastrophic data loss when source and destination resolve to the same location
+  - Detects symlinks/junctions pointing source to destination (or vice versa)
+  - Blocks MOVE operations with CRITICAL error when cycle detected
+  - Warns on COPY operations for destination-inside-source scenarios
+  - New `detect_path_cycle()` function integrated into preflight checks
+
 ## [0.7.1] - 2025-12-18
 
 ### Fixed

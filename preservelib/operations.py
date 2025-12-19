@@ -289,6 +289,88 @@ def check_source_permissions(source_files: List[Union[str, Path]], check_delete:
     return len(errors) == 0, errors
 
 
+def detect_path_cycle(
+    source_files: List[Union[str, Path]],
+    dest_path: Union[str, Path]
+) -> List[str]:
+    """
+    Detect if source and destination resolve to the same location.
+
+    This catches dangerous scenarios where symlinks/junctions could cause
+    a MOVE operation to delete the source which IS the destination.
+
+    Checks for:
+    - Source and destination resolving to same path
+    - Source being inside destination (would cause recursive issues)
+    - Destination being inside source (MOVE would delete destination)
+
+    Args:
+        source_files: List of source file/directory paths
+        dest_path: Destination base path
+
+    Returns:
+        List of cycle/overlap issues found (empty if none)
+    """
+    issues = []
+    dest = Path(dest_path)
+
+    try:
+        dest_resolved = dest.resolve()
+    except OSError:
+        # Destination doesn't exist yet, can't have a cycle
+        return issues
+
+    for src in source_files:
+        src_path = Path(src)
+
+        try:
+            src_resolved = src_path.resolve()
+        except OSError:
+            # Source doesn't exist, skip
+            continue
+
+        # Check 1: Exact same location (via symlink/junction)
+        try:
+            if src_resolved.exists() and dest_resolved.exists():
+                if os.path.samefile(src_resolved, dest_resolved):
+                    issues.append(
+                        f"CRITICAL: Source '{src}' and destination '{dest_path}' "
+                        f"resolve to the same location. A MOVE would delete all data!"
+                    )
+                    continue
+        except OSError:
+            pass
+
+        # Check 2: Destination is inside source
+        # e.g., MOVE /data --dst /data/backup would delete /data/backup during source deletion
+        try:
+            if dest_resolved.exists() and src_resolved.exists():
+                # Check if dest is a subdirectory of src (but not the same)
+                if dest_resolved != src_resolved and dest_resolved.is_relative_to(src_resolved):
+                    issues.append(
+                        f"CRITICAL: Destination '{dest_path}' is inside source '{src}'. "
+                        f"A MOVE would delete the destination during source cleanup!"
+                    )
+                    continue
+        except (OSError, ValueError):
+            pass
+
+        # Check 3: Source is inside destination
+        # e.g., COPY /backup/data --dst /backup would create /backup/backup/data
+        # Less critical but still problematic
+        try:
+            if src_resolved.exists() and dest_resolved.exists():
+                if src_resolved.is_relative_to(dest_resolved):
+                    issues.append(
+                        f"WARNING: Source '{src}' is inside destination '{dest_path}'. "
+                        f"This may cause recursive copying or unexpected behavior."
+                    )
+        except (OSError, ValueError):
+            pass
+
+    return issues
+
+
 def preflight_checks(
     source_files: List[Union[str, Path]],
     dest_path: Union[str, Path],
@@ -322,6 +404,22 @@ def preflight_checks(
     soft_issues = []
     space_status = ""
     is_move = operation.upper() == "MOVE"
+
+    # CRITICAL: Check for path cycles (symlinks/junctions pointing to same location)
+    # This must be checked first as it can cause catastrophic data loss on MOVE
+    cycle_issues = detect_path_cycle(source_files, dest_path)
+    for issue in cycle_issues:
+        if issue.startswith("CRITICAL:"):
+            # For MOVE: always block. For COPY: block on same-location, warn on others
+            if is_move or "resolve to the same location" in issue:
+                hard_issues.append(issue)
+            else:
+                soft_issues.append(issue)
+        elif issue.startswith("WARNING:"):
+            soft_issues.append(issue)
+        else:
+            # Unknown format, treat as soft issue
+            soft_issues.append(issue)
 
     # Check destination write permission
     if check_permissions:
