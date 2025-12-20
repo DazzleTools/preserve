@@ -13,7 +13,7 @@ import tempfile
 import shutil
 from pathlib import Path
 
-from preservelib.operations import detect_path_cycle, preflight_checks
+from preservelib.operations import detect_path_cycle, detect_path_cycles_deep, preflight_checks
 
 
 class TestDetectPathCycle(unittest.TestCase):
@@ -208,6 +208,328 @@ class TestPreflightCycleIntegration(unittest.TestCase):
         # Should pass (no cycle issues)
         cycle_issues = [i for i in hard_issues + soft_issues if "CRITICAL" in i or "inside" in i]
         self.assertEqual(cycle_issues, [])
+
+
+class TestDeepCycleDetection(unittest.TestCase):
+    """Test the detect_path_cycles_deep function for nested junction/symlink scenarios."""
+
+    def setUp(self):
+        """Set up test environment."""
+        self.test_dir = Path(tempfile.mkdtemp(prefix='test_deep_cycle_'))
+        self.src = self.test_dir / "source"
+        self.dst = self.test_dir / "destination"
+        self.src.mkdir()
+        self.dst.mkdir()
+
+        # Create subdirectory structure in source
+        self.src_sub = self.src / "subdir"
+        self.src_sub.mkdir()
+        (self.src_sub / "file.txt").write_text("content in subdir")
+        (self.src / "root_file.txt").write_text("content in root")
+
+    def tearDown(self):
+        """Clean up test environment."""
+        # Need to handle junctions specially on Windows
+        for item in self.test_dir.rglob("*"):
+            try:
+                if item.is_symlink() or (sys.platform == 'win32' and item.is_dir()):
+                    # Try to remove as junction first
+                    try:
+                        item.rmdir()
+                    except OSError:
+                        pass
+            except OSError:
+                pass
+        shutil.rmtree(self.test_dir, ignore_errors=True)
+
+    def test_no_links_returns_empty_report(self):
+        """When no links exist, link_report should be empty."""
+        can_proceed, hard_issues, soft_issues, link_report = detect_path_cycles_deep(
+            [str(self.src)], str(self.dst), "MOVE"
+        )
+        self.assertTrue(can_proceed)
+        self.assertEqual(hard_issues, [])
+        self.assertEqual(link_report, [])
+
+    def test_separate_paths_with_links_ok(self):
+        """Links pointing to unrelated locations should not block."""
+        # Create a link to an unrelated location
+        unrelated = self.test_dir / "unrelated"
+        unrelated.mkdir()
+
+        link_path = self.src / "link_to_unrelated"
+
+        if sys.platform == 'win32':
+            # Create junction on Windows
+            import subprocess
+            result = subprocess.run(
+                ['cmd', '/c', 'mklink', '/J', str(link_path), str(unrelated)],
+                capture_output=True, shell=True
+            )
+            if result.returncode != 0:
+                self.skipTest("Could not create junction")
+        else:
+            link_path.symlink_to(unrelated)
+
+        try:
+            can_proceed, hard_issues, soft_issues, link_report = detect_path_cycles_deep(
+                [str(self.src)], str(self.dst), "MOVE"
+            )
+            self.assertTrue(can_proceed)
+            self.assertEqual(len(link_report), 1)
+            self.assertEqual(hard_issues, [])
+        finally:
+            if link_path.exists():
+                try:
+                    link_path.rmdir()
+                except OSError:
+                    os.unlink(link_path)
+
+    @unittest.skipIf(sys.platform != 'win32', "Junction test requires Windows")
+    def test_nested_junction_pointing_to_dest_blocked(self):
+        """Junction inside source pointing to destination should BLOCK for MOVE."""
+        # This is the critical scenario from Issue #47
+        # source/subdir_link -> destination
+
+        link_path = self.src / "dangerous_link"
+
+        import subprocess
+        result = subprocess.run(
+            ['cmd', '/c', 'mklink', '/J', str(link_path), str(self.dst)],
+            capture_output=True, shell=True
+        )
+        if result.returncode != 0:
+            self.skipTest("Could not create junction")
+
+        try:
+            can_proceed, hard_issues, soft_issues, link_report = detect_path_cycles_deep(
+                [str(self.src)], str(self.dst), "MOVE"
+            )
+
+            # Should NOT be able to proceed
+            self.assertFalse(can_proceed)
+            # Should have a CRITICAL hard issue
+            self.assertTrue(any("CRITICAL" in issue for issue in hard_issues))
+            self.assertTrue(any("points to" in issue and "destination" in issue for issue in hard_issues))
+            # Link should be in report
+            self.assertEqual(len(link_report), 1)
+            self.assertEqual(link_report[0]['link_type'], 'junction')
+        finally:
+            if link_path.exists():
+                link_path.rmdir()
+
+    @unittest.skipIf(sys.platform != 'win32', "Junction test requires Windows")
+    def test_nested_junction_pointing_inside_dest_blocked(self):
+        """Junction inside source pointing INTO destination should BLOCK for MOVE."""
+        # source/link -> destination/subdir
+
+        dest_sub = self.dst / "existing_subdir"
+        dest_sub.mkdir()
+        (dest_sub / "existing.txt").write_text("existing content")
+
+        link_path = self.src / "link_to_dest_subdir"
+
+        import subprocess
+        result = subprocess.run(
+            ['cmd', '/c', 'mklink', '/J', str(link_path), str(dest_sub)],
+            capture_output=True, shell=True
+        )
+        if result.returncode != 0:
+            self.skipTest("Could not create junction")
+
+        try:
+            can_proceed, hard_issues, soft_issues, link_report = detect_path_cycles_deep(
+                [str(self.src)], str(self.dst), "MOVE"
+            )
+
+            # Should NOT be able to proceed
+            self.assertFalse(can_proceed)
+            # Should have a CRITICAL issue about pointing inside destination
+            self.assertTrue(any("inside" in issue.lower() or "points inside" in issue.lower()
+                               for issue in hard_issues))
+        finally:
+            if link_path.exists():
+                link_path.rmdir()
+
+    @unittest.skipIf(sys.platform != 'win32', "Junction test requires Windows")
+    def test_nested_junction_for_copy_is_warning(self):
+        """Same dangerous junction should be WARNING (not block) for COPY."""
+        link_path = self.src / "dangerous_link"
+
+        import subprocess
+        result = subprocess.run(
+            ['cmd', '/c', 'mklink', '/J', str(link_path), str(self.dst)],
+            capture_output=True, shell=True
+        )
+        if result.returncode != 0:
+            self.skipTest("Could not create junction")
+
+        try:
+            can_proceed, hard_issues, soft_issues, link_report = detect_path_cycles_deep(
+                [str(self.src)], str(self.dst), "COPY"
+            )
+
+            # COPY should be able to proceed (with warning)
+            self.assertTrue(can_proceed)
+            self.assertEqual(hard_issues, [])
+            # But should have a warning
+            self.assertTrue(any("WARNING" in issue for issue in soft_issues))
+        finally:
+            if link_path.exists():
+                link_path.rmdir()
+
+    @unittest.skipIf(sys.platform == 'win32', "Symlink test may require admin on Windows")
+    def test_nested_symlink_pointing_to_dest_blocked(self):
+        """Symlink inside source pointing to destination should BLOCK for MOVE."""
+        link_path = self.src / "dangerous_symlink"
+        link_path.symlink_to(self.dst)
+
+        can_proceed, hard_issues, soft_issues, link_report = detect_path_cycles_deep(
+            [str(self.src)], str(self.dst), "MOVE"
+        )
+
+        # Should NOT be able to proceed
+        self.assertFalse(can_proceed)
+        self.assertTrue(any("CRITICAL" in issue for issue in hard_issues))
+        self.assertEqual(len(link_report), 1)
+        self.assertEqual(link_report[0]['link_type'], 'soft')
+
+    def test_deeply_nested_link_detected(self):
+        """Links deep in the tree should still be detected."""
+        # Create deep structure: source/a/b/c/link -> destination
+        deep_path = self.src / "a" / "b" / "c"
+        deep_path.mkdir(parents=True)
+        (deep_path / "deep_file.txt").write_text("deep content")
+
+        link_path = deep_path / "deep_link"
+
+        if sys.platform == 'win32':
+            import subprocess
+            result = subprocess.run(
+                ['cmd', '/c', 'mklink', '/J', str(link_path), str(self.dst)],
+                capture_output=True, shell=True
+            )
+            if result.returncode != 0:
+                self.skipTest("Could not create junction")
+        else:
+            link_path.symlink_to(self.dst)
+
+        try:
+            can_proceed, hard_issues, soft_issues, link_report = detect_path_cycles_deep(
+                [str(self.src)], str(self.dst), "MOVE"
+            )
+
+            # Should detect the deeply nested link
+            self.assertFalse(can_proceed)
+            self.assertEqual(len(link_report), 1)
+            self.assertIn("a", link_report[0]['link_path'])
+            self.assertIn("b", link_report[0]['link_path'])
+            self.assertIn("c", link_report[0]['link_path'])
+        finally:
+            if link_path.exists():
+                try:
+                    link_path.rmdir()
+                except OSError:
+                    os.unlink(link_path)
+
+    def test_link_report_contains_correct_info(self):
+        """Link report should contain all expected fields."""
+        unrelated = self.test_dir / "target"
+        unrelated.mkdir()
+
+        link_path = self.src / "test_link"
+
+        if sys.platform == 'win32':
+            import subprocess
+            result = subprocess.run(
+                ['cmd', '/c', 'mklink', '/J', str(link_path), str(unrelated)],
+                capture_output=True, shell=True
+            )
+            if result.returncode != 0:
+                self.skipTest("Could not create junction")
+        else:
+            link_path.symlink_to(unrelated)
+
+        try:
+            _, _, _, link_report = detect_path_cycles_deep(
+                [str(self.src)], str(self.dst), "MOVE"
+            )
+
+            self.assertEqual(len(link_report), 1)
+            report = link_report[0]
+
+            # Check required fields
+            self.assertIn('link_path', report)
+            self.assertIn('link_type', report)
+            self.assertIn('target', report)
+            self.assertIn('target_resolved', report)
+            self.assertIn('target_exists', report)
+
+            self.assertEqual(report['link_path'], str(link_path))
+            self.assertTrue(report['target_exists'])
+        finally:
+            if link_path.exists():
+                try:
+                    link_path.rmdir()
+                except OSError:
+                    os.unlink(link_path)
+
+
+class TestPreflightDeepCycleIntegration(unittest.TestCase):
+    """Test that preflight_checks uses deep detection for MOVE operations."""
+
+    def setUp(self):
+        """Set up test environment."""
+        self.test_dir = Path(tempfile.mkdtemp(prefix='test_preflight_deep_'))
+        self.src = self.test_dir / "source"
+        self.dst = self.test_dir / "destination"
+        self.src.mkdir()
+        self.dst.mkdir()
+        (self.src / "test.txt").write_text("test content")
+
+    def tearDown(self):
+        """Clean up test environment."""
+        for item in self.test_dir.rglob("*"):
+            try:
+                if item.is_symlink() or (sys.platform == 'win32' and item.is_dir()):
+                    try:
+                        item.rmdir()
+                    except OSError:
+                        pass
+            except OSError:
+                pass
+        shutil.rmtree(self.test_dir, ignore_errors=True)
+
+    @unittest.skipIf(sys.platform != 'win32', "Junction test requires Windows")
+    def test_move_with_nested_junction_blocked_by_preflight(self):
+        """MOVE preflight should block when nested junction points to destination."""
+        # Create nested junction: source/subdir -> destination
+        subdir_link = self.src / "subdir_link"
+
+        import subprocess
+        result = subprocess.run(
+            ['cmd', '/c', 'mklink', '/J', str(subdir_link), str(self.dst)],
+            capture_output=True, shell=True
+        )
+        if result.returncode != 0:
+            self.skipTest("Could not create junction")
+
+        try:
+            all_ok, hard_issues, soft_issues, _ = preflight_checks(
+                [str(self.src)],
+                str(self.dst),
+                operation="MOVE"
+            )
+
+            # Should NOT be OK
+            self.assertFalse(all_ok)
+            # Should have hard issues about the junction
+            self.assertTrue(len(hard_issues) > 0)
+            self.assertTrue(any("CRITICAL" in issue or "points to" in issue
+                               for issue in hard_issues))
+        finally:
+            if subdir_link.exists():
+                subdir_link.rmdir()
 
 
 if __name__ == '__main__':

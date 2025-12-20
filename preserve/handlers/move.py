@@ -20,7 +20,11 @@ from pathlib import Path
 
 from preservelib import operations
 from preservelib import links
-from preservelib.operations import InsufficientSpaceError, PermissionCheckError
+from preservelib.operations import (
+    InsufficientSpaceError,
+    PermissionCheckError,
+    detect_path_cycles_deep,
+)
 from preservelib.destination import (
     scan_destination,
     format_scan_report,
@@ -126,6 +130,44 @@ def handle_move_operation(args, logger):
     dest_path = Path(args.dst)
     if not dest_path.exists():
         dest_path.mkdir(parents=True, exist_ok=True)
+
+    # CRITICAL: Early cycle detection on original source paths (before file expansion)
+    # This catches nested junctions/symlinks that would cause catastrophic data loss
+    # The detection must happen BEFORE os.walk expands directories (which follows links)
+    if args.sources:
+        can_proceed, cycle_hard, cycle_soft, link_report = detect_path_cycles_deep(
+            args.sources, str(dest_path), "MOVE"
+        )
+
+        if link_report:
+            logger.info(f"Found {len(link_report)} link(s) in source tree")
+            for link_info in link_report:
+                link_type = link_info.get('link_type', 'unknown')
+                link_path = link_info.get('link_path', 'unknown')
+                target = link_info.get('target_resolved') or link_info.get('target', 'unknown')
+                logger.debug(f"  {link_type}: {link_path} -> {target}")
+
+        if not can_proceed:
+            logger.error("")
+            logger.error("=" * 70)
+            logger.error("CRITICAL: Cycle detected - MOVE operation BLOCKED")
+            logger.error("=" * 70)
+            for issue in cycle_hard:
+                logger.error(f"  {issue}")
+            logger.error("")
+            logger.error("A MOVE in this configuration would cause CATASTROPHIC DATA LOSS.")
+            logger.error("The source contains links that resolve to the destination.")
+            logger.error("")
+            logger.error("Options:")
+            logger.error("  1. Remove the problematic junction/symlink from source")
+            logger.error("  2. Use COPY instead (data preserved, but check for duplicates)")
+            logger.error("  3. Move the destination to a different location")
+            logger.error("=" * 70)
+            return 1
+
+        if cycle_soft:
+            for issue in cycle_soft:
+                logger.warning(issue)
 
     # Get preserve directory
     preserve_dir = get_preserve_dir(args, dest_path)

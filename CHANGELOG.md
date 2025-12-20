@@ -6,13 +6,21 @@ All notable changes to this project will be documented in this file. This projec
 
 ## [Unreleased]
 
+## [0.7.2] - 2025-12-19
+
 ### Added
-- **Path Cycle Detection** (#47)
-  - Prevents catastrophic data loss when source and destination resolve to the same location
-  - Detects symlinks/junctions pointing source to destination (or vice versa)
-  - Blocks MOVE operations with CRITICAL error when cycle detected
-  - Warns on COPY operations for destination-inside-source scenarios
-  - New `detect_path_cycle()` function integrated into preflight checks
+- **Deep Path Cycle Detection** (#47)
+  - Prevents catastrophic data loss from nested symlinks/junctions
+  - Walks source tree to find links that resolve to destination
+  - Blocks MOVE when any subdirectory link points to/inside destination
+  - Link discovery report shows all links found in source tree
+  - Handles: junctions (Windows), symlinks (all platforms), circular links
+  - New `detect_path_cycles_deep()` function with comprehensive traversal
+  - 21 unit tests covering nested junction/symlink scenarios
+
+### Changed
+- MOVE preflight now uses deep cycle detection (traverses source tree)
+- COPY preflight uses simple cycle detection (top-level only, less critical)
 
 ## [0.7.1] - 2025-12-18
 

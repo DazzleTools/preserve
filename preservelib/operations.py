@@ -31,6 +31,7 @@ except ImportError:
 
 from .manifest import PreserveManifest, calculate_file_hash, verify_file_hash
 from .metadata import collect_file_metadata, apply_file_metadata
+from .links import is_link, detect_link_type, get_link_target
 from .destination import (
     ConflictResolution,
     FileCategory,
@@ -371,6 +372,197 @@ def detect_path_cycle(
     return issues
 
 
+def detect_path_cycles_deep(
+    source_paths: List[Union[str, Path]],
+    dest_path: Union[str, Path],
+    operation: str = "MOVE"
+) -> Tuple[bool, List[str], List[str], List[Dict[str, Any]]]:
+    """
+    Deep scan for cycle conditions including nested symlinks/junctions.
+
+    This function performs a comprehensive check by:
+    1. Running top-level cycle detection
+    2. Walking the source tree WITHOUT following links
+    3. For each link found, resolving its target and checking for cycles
+
+    Args:
+        source_paths: List of source file/directory paths
+        dest_path: Destination base path
+        operation: Operation type ("COPY" or "MOVE")
+
+    Returns:
+        Tuple of (can_proceed, hard_issues, soft_issues, link_report)
+        - can_proceed: True if no blocking issues found
+        - hard_issues: List of blocking issues (must abort)
+        - soft_issues: List of warnings (can continue with confirmation)
+        - link_report: List of dicts describing links found in source tree
+    """
+    hard_issues = []
+    soft_issues = []
+    link_report = []
+    is_move = operation.upper() == "MOVE"
+
+    dest = Path(dest_path)
+    try:
+        dest_resolved = dest.resolve()
+        dest_exists = dest_resolved.exists()
+    except OSError:
+        dest_resolved = None
+        dest_exists = False
+
+    # Phase 1: Top-level checks (existing function)
+    top_level_issues = detect_path_cycle(source_paths, dest_path)
+    for issue in top_level_issues:
+        if "CRITICAL" in issue:
+            hard_issues.append(issue)
+        else:
+            soft_issues.append(issue)
+
+    # Phase 2: Deep link discovery (walk without following links)
+    # Track visited inodes to prevent infinite loops from circular symlinks
+    visited_inodes = set()
+    max_depth = 100  # Safety limit for deep trees
+
+    for source in source_paths:
+        source_path = Path(source)
+
+        if not source_path.exists():
+            continue
+
+        # For files, no traversal needed
+        if source_path.is_file():
+            continue
+
+        # Walk the directory tree WITHOUT following symlinks
+        try:
+            for root, dirs, files in os.walk(source_path, followlinks=False):
+                # Check depth limit
+                try:
+                    depth = len(Path(root).relative_to(source_path).parts)
+                    if depth > max_depth:
+                        soft_issues.append(
+                            f"WARNING: Depth limit ({max_depth}) reached at '{root}'. "
+                            f"Deeper directories not checked for cycles."
+                        )
+                        dirs.clear()  # Don't descend further
+                        continue
+                except ValueError:
+                    pass
+
+                root_path = Path(root)
+
+                # Check each subdirectory for links
+                dirs_to_remove = []
+                for d in dirs:
+                    dir_path = root_path / d
+
+                    # Check if this directory is a link (symlink or junction)
+                    if is_link(dir_path):
+                        link_type = detect_link_type(dir_path)
+                        target_str = get_link_target(dir_path)
+
+                        # Try to resolve the target
+                        try:
+                            target_resolved = dir_path.resolve()
+                            target_exists = target_resolved.exists()
+                        except OSError:
+                            target_resolved = None
+                            target_exists = False
+
+                        # Record the link in our report
+                        link_info = {
+                            'link_path': str(dir_path),
+                            'link_type': link_type or 'unknown',
+                            'target': target_str or 'UNRESOLVABLE',
+                            'target_resolved': str(target_resolved) if target_resolved else None,
+                            'target_exists': target_exists,
+                        }
+                        link_report.append(link_info)
+
+                        # Check for cycle conditions
+                        if target_resolved and dest_resolved and target_exists and dest_exists:
+                            try:
+                                # Check 1: Link target IS the destination
+                                if os.path.samefile(target_resolved, dest_resolved):
+                                    issue = (
+                                        f"CRITICAL: Link '{dir_path}' ({link_type}) points to "
+                                        f"destination '{dest_path}'. Traversing it during {operation} "
+                                        f"would copy files to themselves then delete them!"
+                                    )
+                                    if is_move:
+                                        hard_issues.append(issue)
+                                    else:
+                                        soft_issues.append(issue.replace("CRITICAL:", "WARNING:"))
+
+                                # Check 2: Link target is INSIDE destination
+                                elif target_resolved.is_relative_to(dest_resolved):
+                                    issue = (
+                                        f"CRITICAL: Link '{dir_path}' ({link_type}) points inside "
+                                        f"destination at '{target_resolved}'. Traversing it during "
+                                        f"{operation} would create a cycle!"
+                                    )
+                                    if is_move:
+                                        hard_issues.append(issue)
+                                    else:
+                                        soft_issues.append(issue.replace("CRITICAL:", "WARNING:"))
+
+                                # Check 3: Destination is inside link target
+                                elif dest_resolved.is_relative_to(target_resolved):
+                                    soft_issues.append(
+                                        f"WARNING: Link '{dir_path}' ({link_type}) target contains "
+                                        f"destination. This may cause unexpected nesting behavior."
+                                    )
+
+                            except (OSError, ValueError):
+                                pass
+
+                        # Check for circular symlinks (target points back into source tree)
+                        if target_resolved:
+                            try:
+                                target_stat = target_resolved.stat()
+                                inode_key = (target_stat.st_dev, target_stat.st_ino)
+                                if inode_key in visited_inodes:
+                                    soft_issues.append(
+                                        f"WARNING: Circular link detected at '{dir_path}'. "
+                                        f"Target '{target_resolved}' was already visited."
+                                    )
+                                else:
+                                    visited_inodes.add(inode_key)
+                            except OSError:
+                                pass
+
+                        # Don't descend into links (we've analyzed them)
+                        dirs_to_remove.append(d)
+
+                    else:
+                        # Regular directory - track its inode to detect circular structures
+                        try:
+                            dir_stat = dir_path.stat()
+                            inode_key = (dir_stat.st_dev, dir_stat.st_ino)
+                            if inode_key in visited_inodes:
+                                soft_issues.append(
+                                    f"WARNING: Directory '{dir_path}' was already visited "
+                                    f"(possible hard-linked directory structure)."
+                                )
+                                dirs_to_remove.append(d)
+                            else:
+                                visited_inodes.add(inode_key)
+                        except OSError:
+                            pass
+
+                # Remove links and circular dirs from traversal
+                for d in dirs_to_remove:
+                    dirs.remove(d)
+
+        except PermissionError as e:
+            soft_issues.append(f"WARNING: Permission denied accessing '{source_path}': {e}")
+        except OSError as e:
+            soft_issues.append(f"WARNING: Error traversing '{source_path}': {e}")
+
+    can_proceed = len(hard_issues) == 0
+    return can_proceed, hard_issues, soft_issues, link_report
+
+
 def preflight_checks(
     source_files: List[Union[str, Path]],
     dest_path: Union[str, Path],
@@ -407,19 +599,37 @@ def preflight_checks(
 
     # CRITICAL: Check for path cycles (symlinks/junctions pointing to same location)
     # This must be checked first as it can cause catastrophic data loss on MOVE
-    cycle_issues = detect_path_cycle(source_files, dest_path)
-    for issue in cycle_issues:
-        if issue.startswith("CRITICAL:"):
-            # For MOVE: always block. For COPY: block on same-location, warn on others
-            if is_move or "resolve to the same location" in issue:
-                hard_issues.append(issue)
+    # Use deep detection for MOVE (checks nested junctions), simple for COPY
+    if is_move:
+        # Deep scan: walks source tree to find nested junctions pointing to dest
+        _, cycle_hard, cycle_soft, link_report = detect_path_cycles_deep(
+            source_files, dest_path, operation
+        )
+        hard_issues.extend(cycle_hard)
+        soft_issues.extend(cycle_soft)
+
+        # Log link report if any links found
+        if link_report:
+            logger.info(f"Found {len(link_report)} link(s) in source tree:")
+            for link_info in link_report:
+                logger.debug(
+                    f"  - {link_info['link_type']}: {link_info['link_path']} -> "
+                    f"{link_info.get('target_resolved', link_info['target'])}"
+                )
+    else:
+        # Simple check for COPY (less critical, no source deletion)
+        cycle_issues = detect_path_cycle(source_files, dest_path)
+        for issue in cycle_issues:
+            if issue.startswith("CRITICAL:"):
+                # For COPY: block on same-location, warn on others
+                if "resolve to the same location" in issue:
+                    hard_issues.append(issue)
+                else:
+                    soft_issues.append(issue)
+            elif issue.startswith("WARNING:"):
+                soft_issues.append(issue)
             else:
                 soft_issues.append(issue)
-        elif issue.startswith("WARNING:"):
-            soft_issues.append(issue)
-        else:
-            # Unknown format, treat as soft issue
-            soft_issues.append(issue)
 
     # Check destination write permission
     if check_permissions:
