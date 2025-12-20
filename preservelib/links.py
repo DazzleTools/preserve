@@ -10,6 +10,13 @@ Supported link types:
 - soft: Symbolic link (cross-platform, may need admin on Windows)
 - hard: Hard link (cross-platform, same filesystem only, files only)
 - auto: Platform-appropriate default (junction on Windows, soft elsewhere)
+
+Link handling modes (for MOVE operations with existing links in source):
+- block: (default) Block operation if cycle-creating links found
+- skip: Skip links, only move non-link content
+- unlink: Remove source links that point to destination (consolidation)
+- recreate: Recreate links at destination with adjusted targets (Phase 2)
+- ask: Interactive prompt for each link (Phase 2)
 """
 
 import os
@@ -17,8 +24,10 @@ import sys
 import logging
 import subprocess
 import ctypes
+from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
-from typing import Dict, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +39,231 @@ LINK_TYPE_AUTO = 'auto'
 LINK_TYPE_DAZZLE = 'dazzle'  # Future: .dazzlelink metadata file
 
 VALID_LINK_TYPES = [LINK_TYPE_JUNCTION, LINK_TYPE_SOFT, LINK_TYPE_HARD, LINK_TYPE_AUTO, LINK_TYPE_DAZZLE]
+
+
+# ==============================================================================
+# Link Handling Enums and Data Structures
+# ==============================================================================
+
+
+class LinkHandlingMode(Enum):
+    """
+    How to handle links discovered in the source tree during MOVE operations.
+
+    Used with the --link-handling CLI flag to control behavior when links
+    are found that would otherwise block the operation due to cycle detection.
+    """
+    BLOCK = "block"        # Default: block if cycle-creating links found
+    SKIP = "skip"          # Skip links, only move non-link content
+    UNLINK = "unlink"      # Remove source links that point to destination
+    RECREATE = "recreate"  # Recreate links at destination (Phase 2)
+    ASK = "ask"            # Interactive prompt for each link (Phase 2)
+
+    @classmethod
+    def from_string(cls, value: str) -> "LinkHandlingMode":
+        """Convert string to LinkHandlingMode, with helpful error message."""
+        try:
+            return cls(value.lower())
+        except ValueError:
+            valid = ", ".join(m.value for m in cls)
+            raise ValueError(f"Invalid link handling mode: '{value}'. Valid modes: {valid}")
+
+
+class LinkAction(Enum):
+    """
+    Action to take for a specific link during traversal.
+
+    This is the per-link decision made based on LinkHandlingMode and link analysis.
+    """
+    FOLLOW = "follow"      # Follow the link (descend into it during traversal)
+    SKIP = "skip"          # Skip this link entirely
+    UNLINK = "unlink"      # Remove this link from source (consolidation)
+    RECREATE = "recreate"  # Recreate this link at destination
+    BLOCK = "block"        # Block the entire operation due to this link
+
+
+@dataclass
+class LinkInfo:
+    """
+    Information about a discovered link in the source tree.
+
+    Captures all details needed to make handling decisions and report to user.
+    """
+    # Path to the link itself
+    link_path: Path
+
+    # Link type (junction, soft, hard)
+    link_type: Optional[str] = None
+
+    # Raw target (as stored in the link)
+    raw_target: Optional[str] = None
+
+    # Resolved target (absolute path after resolution)
+    resolved_target: Optional[Path] = None
+
+    # Relationship to destination
+    target_is_destination: bool = False  # Target == destination
+    target_inside_destination: bool = False  # Target is child of destination
+    target_contains_destination: bool = False  # Destination is child of target
+
+    # Link health
+    is_broken: bool = False  # Target doesn't exist
+    is_circular: bool = False  # Part of a circular link chain
+
+    # Decision tracking
+    action: Optional[LinkAction] = None
+    action_result: Optional[str] = None  # Success/error message
+
+    # Additional context
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def creates_cycle_with(self, dest_path: Path) -> bool:
+        """Check if this link would create a cycle with the given destination."""
+        return (
+            self.target_is_destination or
+            self.target_inside_destination or
+            self.target_contains_destination
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for JSON serialization and reporting."""
+        return {
+            "link_path": str(self.link_path),
+            "link_type": self.link_type,
+            "raw_target": self.raw_target,
+            "resolved_target": str(self.resolved_target) if self.resolved_target else None,
+            "target_is_destination": self.target_is_destination,
+            "target_inside_destination": self.target_inside_destination,
+            "target_contains_destination": self.target_contains_destination,
+            "is_broken": self.is_broken,
+            "is_circular": self.is_circular,
+            "action": self.action.value if self.action else None,
+            "action_result": self.action_result,
+        }
+
+
+def analyze_link(
+    link_path: Union[str, Path],
+    dest_path: Union[str, Path]
+) -> LinkInfo:
+    """
+    Analyze a link and its relationship to the destination.
+
+    Args:
+        link_path: Path to the link
+        dest_path: Destination path for the MOVE operation
+
+    Returns:
+        LinkInfo with all analysis results
+    """
+    link_path = Path(link_path)
+    dest_path = Path(dest_path).resolve()
+
+    info = LinkInfo(link_path=link_path)
+
+    # Detect link type
+    info.link_type = detect_link_type(link_path)
+
+    # Get raw target
+    info.raw_target = get_link_target(link_path)
+
+    if info.raw_target is None:
+        info.is_broken = True
+        return info
+
+    # Resolve target
+    try:
+        # Handle relative targets
+        if not Path(info.raw_target).is_absolute():
+            resolved = (link_path.parent / info.raw_target).resolve()
+        else:
+            resolved = Path(info.raw_target).resolve()
+
+        info.resolved_target = resolved
+
+        # Check if target exists
+        if not resolved.exists():
+            info.is_broken = True
+
+    except Exception as e:
+        logger.debug(f"Error resolving link target {info.raw_target}: {e}")
+        info.is_broken = True
+        return info
+
+    # Analyze relationship to destination
+    if info.resolved_target:
+        try:
+            # Target IS destination
+            if os.path.samefile(info.resolved_target, dest_path):
+                info.target_is_destination = True
+
+            # Target is inside destination
+            elif info.resolved_target.is_relative_to(dest_path):
+                info.target_inside_destination = True
+
+            # Destination is inside target
+            elif dest_path.is_relative_to(info.resolved_target):
+                info.target_contains_destination = True
+
+        except (OSError, ValueError):
+            # samefile can fail, is_relative_to can raise ValueError
+            pass
+
+    return info
+
+
+def decide_link_action(
+    link_info: LinkInfo,
+    mode: LinkHandlingMode,
+    dest_path: Path
+) -> LinkAction:
+    """
+    Decide what action to take for a link based on handling mode.
+
+    Args:
+        link_info: Analyzed link information
+        mode: Link handling mode from CLI
+        dest_path: Destination path
+
+    Returns:
+        LinkAction to take for this link
+    """
+    creates_cycle = link_info.creates_cycle_with(dest_path)
+
+    if mode == LinkHandlingMode.BLOCK:
+        if creates_cycle:
+            return LinkAction.BLOCK
+        else:
+            return LinkAction.FOLLOW
+
+    elif mode == LinkHandlingMode.SKIP:
+        # Always skip links in skip mode
+        return LinkAction.SKIP
+
+    elif mode == LinkHandlingMode.UNLINK:
+        if creates_cycle:
+            # Unlink links that point to/inside destination (consolidation)
+            return LinkAction.UNLINK
+        else:
+            # Links pointing elsewhere - skip them
+            return LinkAction.SKIP
+
+    elif mode == LinkHandlingMode.RECREATE:
+        # Phase 2: recreate all links at destination
+        raise NotImplementedError(
+            "Link handling mode 'recreate' is not yet implemented. "
+            "Use 'skip' or 'unlink' for now. See issue #48 for progress."
+        )
+
+    elif mode == LinkHandlingMode.ASK:
+        # Phase 2: interactive prompt
+        raise NotImplementedError(
+            "Link handling mode 'ask' is not yet implemented. "
+            "Use 'skip' or 'unlink' for now. See issue #48 for progress."
+        )
+
+    # Fallback - shouldn't reach here
+    return LinkAction.BLOCK
 
 
 def is_link(path: Union[str, Path]) -> bool:

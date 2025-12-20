@@ -407,6 +407,16 @@ def _add_link_args(parser):
                                 'auto (platform default)')
     link_group.add_argument('--link-force', action='store_true',
                            help='Force link creation even if source path still has content')
+    link_group.add_argument('--link-handling',
+                           choices=['block', 'skip', 'unlink', 'recreate', 'ask'],
+                           default='block',
+                           metavar='MODE',
+                           help='How to handle links found in source tree that would create '
+                                'cycles with destination. Modes: block (default - stop operation), '
+                                'skip (skip links, move non-link content), '
+                                'unlink (remove links pointing to destination - consolidation). '
+                                'Phase 2: recreate (copy links to destination), '
+                                'ask (prompt for each link)')
 
 
 def _add_safety_args(parser):

@@ -20,6 +20,13 @@ from pathlib import Path
 
 from preservelib import operations
 from preservelib import links
+from preservelib.links import (
+    LinkHandlingMode,
+    LinkAction,
+    analyze_link,
+    decide_link_action,
+    remove_link,
+)
 from preservelib.operations import (
     InsufficientSpaceError,
     PermissionCheckError,
@@ -131,6 +138,18 @@ def handle_move_operation(args, logger):
     if not dest_path.exists():
         dest_path.mkdir(parents=True, exist_ok=True)
 
+    # Parse link handling mode from CLI argument
+    link_handling_str = getattr(args, 'link_handling', 'block')
+    try:
+        link_handling_mode = LinkHandlingMode.from_string(link_handling_str)
+    except ValueError as e:
+        logger.error(str(e))
+        return 1
+
+    # Track links for handling (skip/unlink)
+    links_to_skip = []  # Links whose directories should be excluded from traversal
+    links_to_unlink = []  # Links to remove after successful move
+
     # CRITICAL: Early cycle detection on original source paths (before file expansion)
     # This catches nested junctions/symlinks that would cause catastrophic data loss
     # The detection must happen BEFORE os.walk expands directories (which follows links)
@@ -141,33 +160,105 @@ def handle_move_operation(args, logger):
 
         if link_report:
             logger.info(f"Found {len(link_report)} link(s) in source tree")
-            for link_info in link_report:
-                link_type = link_info.get('link_type', 'unknown')
-                link_path = link_info.get('link_path', 'unknown')
-                target = link_info.get('target_resolved') or link_info.get('target', 'unknown')
+            for link_info_dict in link_report:
+                link_type = link_info_dict.get('link_type', 'unknown')
+                link_path = link_info_dict.get('link_path', 'unknown')
+                target = link_info_dict.get('target_resolved') or link_info_dict.get('target', 'unknown')
                 logger.debug(f"  {link_type}: {link_path} -> {target}")
 
+        # Handle links based on link_handling_mode
         if not can_proceed:
-            logger.error("")
-            logger.error("=" * 70)
-            logger.error("CRITICAL: Cycle detected - MOVE operation BLOCKED")
-            logger.error("=" * 70)
-            for issue in cycle_hard:
-                logger.error(f"  {issue}")
-            logger.error("")
-            logger.error("A MOVE in this configuration would cause CATASTROPHIC DATA LOSS.")
-            logger.error("The source contains links that resolve to the destination.")
-            logger.error("")
-            logger.error("Options:")
-            logger.error("  1. Remove the problematic junction/symlink from source")
-            logger.error("  2. Use COPY instead (data preserved, but check for duplicates)")
-            logger.error("  3. Move the destination to a different location")
-            logger.error("=" * 70)
-            return 1
+            if link_handling_mode == LinkHandlingMode.BLOCK:
+                # Default behavior: block the operation
+                logger.error("")
+                logger.error("=" * 70)
+                logger.error("CRITICAL: Cycle detected - MOVE operation BLOCKED")
+                logger.error("=" * 70)
+                for issue in cycle_hard:
+                    logger.error(f"  {issue}")
+                logger.error("")
+                logger.error("A MOVE in this configuration would cause CATASTROPHIC DATA LOSS.")
+                logger.error("The source contains links that resolve to the destination.")
+                logger.error("")
+                logger.error("Options:")
+                logger.error("  1. Remove the problematic junction/symlink from source")
+                logger.error("  2. Use COPY instead (data preserved, but check for duplicates)")
+                logger.error("  3. Move the destination to a different location")
+                logger.error("  4. Use --link-handling skip to skip links")
+                logger.error("  5. Use --link-handling unlink to remove links after move")
+                logger.error("=" * 70)
+                return 1
+
+            elif link_handling_mode == LinkHandlingMode.SKIP:
+                # Skip mode: exclude links from traversal
+                logger.warning("")
+                logger.warning("=" * 70)
+                logger.warning("LINK HANDLING: skip mode - problematic links will be skipped")
+                logger.warning("=" * 70)
+                for link_info_dict in link_report:
+                    if link_info_dict.get('creates_cycle'):
+                        link_path = link_info_dict.get('link_path')
+                        links_to_skip.append(link_path)
+                        logger.warning(f"  SKIP: {link_path}")
+                logger.warning("")
+                logger.warning(f"Skipping {len(links_to_skip)} link(s), moving everything else.")
+                logger.warning("=" * 70)
+
+            elif link_handling_mode == LinkHandlingMode.UNLINK:
+                # Unlink mode: remove links pointing to destination after move
+                logger.warning("")
+                logger.warning("=" * 70)
+                logger.warning("LINK HANDLING: unlink mode - links will be removed after move")
+                logger.warning("=" * 70)
+                for link_info_dict in link_report:
+                    if link_info_dict.get('creates_cycle'):
+                        link_path = link_info_dict.get('link_path')
+                        links_to_skip.append(link_path)  # Also skip during traversal
+                        links_to_unlink.append(link_path)  # Mark for removal
+                        logger.warning(f"  UNLINK: {link_path}")
+                logger.warning("")
+                logger.warning(f"Will unlink {len(links_to_unlink)} link(s) after successful move.")
+                logger.warning("=" * 70)
+
+            elif link_handling_mode == LinkHandlingMode.RECREATE:
+                # Phase 2 - not yet implemented
+                logger.error("Link handling mode 'recreate' is not yet implemented.")
+                logger.error("Use 'skip' or 'unlink' for now. See issue #48 for progress.")
+                return 1
+
+            elif link_handling_mode == LinkHandlingMode.ASK:
+                # Phase 2 - not yet implemented
+                logger.error("Link handling mode 'ask' is not yet implemented.")
+                logger.error("Use 'skip' or 'unlink' for now. See issue #48 for progress.")
+                return 1
 
         if cycle_soft:
             for issue in cycle_soft:
                 logger.warning(issue)
+
+    # Filter out files that are inside links_to_skip directories
+    if links_to_skip:
+        original_count = len(source_files)
+        filtered_files = []
+        for file_path in source_files:
+            skip_this_file = False
+            for skip_link in links_to_skip:
+                skip_link_path = Path(skip_link)
+                try:
+                    # Check if file is inside the skip link directory
+                    if Path(file_path).is_relative_to(skip_link_path):
+                        skip_this_file = True
+                        break
+                except (ValueError, TypeError):
+                    # is_relative_to raises ValueError if not relative
+                    pass
+            if not skip_this_file:
+                filtered_files.append(file_path)
+
+        source_files = filtered_files
+        skipped_count = original_count - len(source_files)
+        if skipped_count > 0:
+            logger.info(f"Filtered out {skipped_count} file(s) inside skipped links")
 
     # Get preserve directory
     preserve_dir = get_preserve_dir(args, dest_path)
@@ -563,6 +654,41 @@ def handle_move_operation(args, logger):
                 print(f"\nWARNING: Cannot create link - source directory not empty: {link_path}")
                 print("  Use --link-force to create link anyway")
                 logger.warning(f"Source directory not empty, skipping link creation: {link_path}")
+
+    # Handle links_to_unlink after successful move (--link-handling unlink)
+    if links_to_unlink and move_success and not options['dry_run']:
+        print("")
+        print("=" * 60)
+        print("UNLINK: Removing links that pointed to destination")
+        print("=" * 60)
+
+        unlink_success = 0
+        unlink_failed = 0
+
+        for link_path_str in links_to_unlink:
+            link_path = Path(link_path_str)
+            if links.is_link(link_path):
+                success, error = remove_link(link_path)
+                if success:
+                    print(f"  Unlinked: {link_path}")
+                    unlink_success += 1
+                else:
+                    print(f"  FAILED to unlink {link_path}: {error}")
+                    logger.error(f"Failed to unlink {link_path}: {error}")
+                    unlink_failed += 1
+            else:
+                # Link no longer exists or isn't a link
+                logger.debug(f"Link already removed or not a link: {link_path}")
+
+        print("")
+        print(f"  Unlinked: {unlink_success}, Failed: {unlink_failed}")
+        print("=" * 60)
+
+    elif links_to_unlink and options['dry_run']:
+        print("")
+        print("[DRY RUN] Would unlink the following links:")
+        for link_path_str in links_to_unlink:
+            print(f"  {link_path_str}")
 
     # Return success if no failures and (no verification or all verified)
     return 0 if move_success else 1

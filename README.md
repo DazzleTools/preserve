@@ -300,16 +300,23 @@ diff ../../source-hashes.txt ../../restored-hashes.txt
 
 See [CHANGELOG.md](CHANGELOG.md) for a detailed history of changes.
 
-### Latest Release (v0.5.x)
+### Latest Release (v0.7.x)
 
-This is a maintenance development cycle. The current goal is stabilize and fully test all major uses of preserve (COPY, MOVE, RESTORE, and VERIFY) with no missing flags / functionality before 0.6.x.
+v0.7.x focuses on **destination awareness** and **safety**:
+- Pre-operation destination scanning to detect conflicts before COPY/MOVE
+- Deep path cycle detection to prevent data loss from nested junctions/symlinks
+- CLEANUP command for recovering from interrupted MOVE operations
+- Smart path mode warnings to catch common mistakes
 
 ### Recent Highlights
+- **Deep Cycle Detection** (v0.7.2): Walks source tree to find nested junctions/symlinks that could cause data loss
+- **Link Handling Modes** (v0.7.3): `--link-handling skip|unlink` for moving directories containing links
+- **Destination Awareness** (v0.7.0): Scan destination before operations, `--on-conflict` modes
+- **CLEANUP Command** (v0.7.0): Recover from interrupted MOVE with `--mode complete|rollback`
+- **Link Creation** (v0.6.0): Create junctions/symlinks after MOVE with `-L junction`
 - **Advanced Filtering**: Exclude patterns, depth control, time-based selection
 - **Three-Way Verification**: Source, destination, or both forms of verifications during restore operations
 - **Sequential Manifests**: Support for multiple operations to same destination
-- **GitRepoKit Versioning**: Automated version management with git hooks
-- **Document Tidying**: Improving versioning, README, CHANGELOG, and other docs
 
 ## Contributing
 

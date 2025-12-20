@@ -476,14 +476,15 @@ def detect_path_cycles_deep(
                             'target': target_str or 'UNRESOLVABLE',
                             'target_resolved': str(target_resolved) if target_resolved else None,
                             'target_exists': target_exists,
+                            'creates_cycle': False,  # Will be set to True if cycle detected
                         }
-                        link_report.append(link_info)
 
                         # Check for cycle conditions
                         if target_resolved and dest_resolved and target_exists and dest_exists:
                             try:
                                 # Check 1: Link target IS the destination
                                 if os.path.samefile(target_resolved, dest_resolved):
+                                    link_info['creates_cycle'] = True
                                     issue = (
                                         f"CRITICAL: Link '{dir_path}' ({link_type}) points to "
                                         f"destination '{dest_path}'. Traversing it during {operation} "
@@ -496,6 +497,7 @@ def detect_path_cycles_deep(
 
                                 # Check 2: Link target is INSIDE destination
                                 elif target_resolved.is_relative_to(dest_resolved):
+                                    link_info['creates_cycle'] = True
                                     issue = (
                                         f"CRITICAL: Link '{dir_path}' ({link_type}) points inside "
                                         f"destination at '{target_resolved}'. Traversing it during "
@@ -508,6 +510,7 @@ def detect_path_cycles_deep(
 
                                 # Check 3: Destination is inside link target
                                 elif dest_resolved.is_relative_to(target_resolved):
+                                    link_info['creates_cycle'] = True
                                     soft_issues.append(
                                         f"WARNING: Link '{dir_path}' ({link_type}) target contains "
                                         f"destination. This may cause unexpected nesting behavior."
@@ -530,6 +533,9 @@ def detect_path_cycles_deep(
                                     visited_inodes.add(inode_key)
                             except OSError:
                                 pass
+
+                        # Add to link report after all analysis
+                        link_report.append(link_info)
 
                         # Don't descend into links (we've analyzed them)
                         dirs_to_remove.append(d)

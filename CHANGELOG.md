@@ -6,6 +6,26 @@ All notable changes to this project will be documented in this file. This projec
 
 ## [Unreleased]
 
+## [0.7.3] - 2025-12-19
+
+### Added
+- **`--link-handling` Flag for MOVE Operations** (#48)
+  - `skip` mode: Skip links during traversal, move non-link content only
+  - `unlink` mode: Remove links that point to destination after successful move (consolidation)
+  - `block` mode (default): Block operation if cycle-creating links found
+  - Phase 2 modes (`recreate`, `ask`) return NotImplementedError with guidance
+- `LinkHandlingMode` enum with `from_string()` parser
+- `LinkInfo` dataclass for comprehensive link analysis
+- `analyze_link()` function for link relationship analysis
+- `decide_link_action()` function for mode-based action selection
+- `creates_cycle` field in link report for easier filtering
+- 19 new unit tests for link handling functionality
+
+### Changed
+- Cycle detection now includes `creates_cycle` field in link report
+- MOVE handler respects `--link-handling` mode for cycle-creating links
+- Error messages now suggest `--link-handling skip` and `--link-handling unlink` as options
+
 ## [0.7.2] - 2025-12-19
 
 ### Added
