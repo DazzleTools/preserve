@@ -1,9 +1,12 @@
 # Preserve
 
-[![Version](https://img.shields.io/github/v/release/djdarcy/preserve)](https://github.com/djdarcy/preserve/releases)
+[![Release Date](https://img.shields.io/github/release-date/DazzleTools/preserve)](https://github.com/DazzleTools/preserve/releases)
+[![PyPI](https://img.shields.io/pypi/v/dazzle-preserve)](https://pypi.org/project/dazzle-preserve/)
+[![PyPI Downloads](https://static.pepy.tech/personalized-badge/dazzle-preserve?period=total&units=international_system&left_color=black&right_color=green&left_text=downloads)](https://pepy.tech/projects/dazzle-preserve)
 [![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-GPL%20v3-green.svg)](https://www.gnu.org/licenses/gpl-3.0.html)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)]()
+[![GitHub Discussions](https://img.shields.io/github/discussions/DazzleTools/preserve)](https://github.com/DazzleTools/preserve/discussions)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)](docs/platform-support.md)
 
 > **Track files and always get them back to where you need them.**
 
@@ -221,6 +224,8 @@ preserve VERIFY --src "C:/my-project" --dst "E:/backup" --hash SHA256 --report v
 type verify-report.txt
 ```
 
+**Tip**: For visual validation, you can also use a diff tool like [Beyond Compare](https://www.scootersoftware.com/download) to directly compare the source and backup directories side-by-side.
+
 ### Step 4: Test Restoration
 
 ```bash
@@ -328,8 +333,8 @@ Like the project?
 
 ## Acknowledgments
 
-- [dazzlelink](https://github.com/djdarcy/dazzlelink) - Enhanced metadata storage and file references
-- [GitRepoKit](https://github.com/djdarcy/GitRepoKit) - Automated version management system
+- [dazzlelink](https://github.com/DazzleTools/dazzlelink) - Enhanced metadata storage and file references
+- [GitRepoKit](https://github.com/DazzleTools/git-repokit) - Automated version management system
 - Community contributors - Testing, feedback, and improvements
 
 ## License

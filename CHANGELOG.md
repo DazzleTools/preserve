@@ -26,6 +26,13 @@ All notable changes to this project will be documented in this file. This projec
 - MOVE handler respects `--link-handling` mode for cycle-creating links
 - Error messages now suggest `--link-handling skip` and `--link-handling unlink` as options
 
+### Documentation
+- Added `docs/platform-support.md` with cross-platform details, quirks, and testing call-to-action
+- Updated README badges: release date, PyPI version, download stats, GitHub Discussions
+- Fixed acknowledgment URLs to DazzleTools organization (GitRepoKit, dazzlelink)
+- Added Beyond Compare link for manual verification workflow
+- Enabled GitHub Discussions
+
 ## [0.7.2] - 2025-12-19
 
 ### Added
