@@ -27,7 +27,7 @@ PHASE = None  # Stable release
 # DO NOT EDIT THIS LINE MANUALLY
 # Note: Hash reflects the commit this version builds upon (HEAD at commit time)
 # The hash will be one commit behind after the commit is created (git limitation)
-__version__ = "0.8.0_main_56-20260623-3e2c361b"
+__version__ = "0.8.0_main_57-20260623-2d51bf5d"
 
 
 def get_version():

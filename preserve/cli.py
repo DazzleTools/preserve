@@ -99,6 +99,7 @@ Note: When copying directories, --recursive (-r) is required to include files in
     _add_path_args(copy_parser)
     _add_verification_args(copy_parser)
     _add_dazzlelink_args(copy_parser)
+    _add_dazzlelink_create_args(copy_parser)
     _add_safety_args(copy_parser)
     _add_warning_args(copy_parser)
     _add_destination_aware_args(copy_parser)
@@ -141,6 +142,7 @@ Note: When moving directories, --recursive (-r) is required to include files in 
     _add_path_args(move_parser)
     _add_verification_args(move_parser)
     _add_dazzlelink_args(move_parser)
+    _add_dazzlelink_create_args(move_parser)
     _add_safety_args(move_parser)
     _add_warning_args(move_parser)
     _add_destination_aware_args(move_parser)
@@ -394,6 +396,32 @@ def _add_dazzlelink_args(parser):
                        help='Use dazzlelinks for verification if no manifest is found')
     parser.add_argument('--no-dazzlelinks', action='store_true',
                        help='Do not use dazzlelinks for verification')
+
+
+def _add_dazzlelink_create_args(parser):
+    """Add write-side dazzlelink CREATION arguments (COPY / MOVE only).
+
+    The handlers (handlers/copy.py, handlers/move.py, utils.get_dazzlelink_dir)
+    already read args.dazzlelink / dazzlelink_mode / dazzlelink_dir /
+    dazzlelink_with_files via hasattr; this registers them so the flags are
+    actually reachable on the command line (they were previously read but never
+    declared, so `--dazzlelink` errored as an unrecognized argument).
+    """
+    dl_group = parser.add_argument_group('Dazzlelink creation options')
+    dl_group.add_argument('--dazzlelink', action='store_true',
+                         help='Create a .dazzlelink file for each preserved file '
+                              '(records the source<->destination mapping). Requires '
+                              'the [dazzlelink] extra (dazzle-linklib).')
+    dl_group.add_argument('--dazzlelink-mode', choices=['info', 'open', 'auto'],
+                         default='info', metavar='MODE',
+                         help="Dazzlelink mode: 'info' (default), 'open', or 'auto'")
+    dl_group.add_argument('--dazzlelink-dir', metavar='DIR',
+                         help='Directory for .dazzlelink files (absolute, or relative '
+                              'to the destination). Default: .preserve/dazzlelinks or '
+                              '.dazzlelinks in the destination')
+    dl_group.add_argument('--dazzlelink-with-files', action='store_true',
+                         help='Store each .dazzlelink alongside its preserved file '
+                              'instead of in a separate directory')
 
 
 def _add_link_args(parser):
