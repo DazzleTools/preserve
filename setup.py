@@ -28,10 +28,14 @@ setup(
         # Base requirements
         "pathlib",
         "colorama>=0.4.0",  # For colored terminal output
-        "dazzle-filekit>=0.1.0",  # File operations library
+        # L3 preservation library (manifest + operations). Brings dazzle-filekit
+        # (L1) transitively; preserve imports dazzle_preservelib, not preservelib.
+        "dazzle-preservelib>=0.8.0",
     ],
     extras_require={
-        "dazzlelink": ["dazzlelink>=0.5.0"],
+        # The .dazzlelink bridge now flows through dazzle_preservelib's optional
+        # extra (the L2 record library), not the standalone dazzlelink tool.
+        "dazzlelink": ["dazzle-preservelib[dazzlelink]>=0.8.0"],
         "windows": ["pywin32"],
         "dev": [
             "pytest",

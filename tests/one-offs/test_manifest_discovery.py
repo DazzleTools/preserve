@@ -2,7 +2,7 @@
 """Test manifest discovery after moving to preservelib.manifest"""
 
 from pathlib import Path
-from preservelib.manifest import find_available_manifests
+from dazzle_preservelib.manifest import find_available_manifests
 
 # Test on a known directory
 test_dirs = [

@@ -43,8 +43,8 @@ from .handlers import (
 )
 
 # Import from preservelib for backward compatibility with tests
-from preservelib import operations
-from preservelib.manifest import find_available_manifests
+from dazzle_preservelib import operations
+from dazzle_preservelib.manifest import find_available_manifests
 
 # Export utilities for backward compatibility with tests
 from .utils import (
@@ -160,7 +160,7 @@ def setup_logging(args):
     # Configure package-level loggers with propagation=True
     # This ensures all logs go through the root logger
     # We'll only set the appropriate levels on each package logger
-    for module_name in ['preserve', 'preservelib', 'preservelib.operations', 'preservelib.dazzlelink']:
+    for module_name in ['preserve', 'dazzle_preservelib', 'dazzle_preservelib.operations', 'dazzle_preservelib.dazzlelink']:
         module_logger = logging.getLogger(module_name)
 
         # Remove any existing handlers to avoid duplication

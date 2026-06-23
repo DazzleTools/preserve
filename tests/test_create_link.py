@@ -19,7 +19,7 @@ from unittest import skipIf, skipUnless
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from preservelib import links
+from dazzle_preservelib import links
 
 
 class TestLinkDetection(unittest.TestCase):

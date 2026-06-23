@@ -13,7 +13,7 @@ import tempfile
 import shutil
 from pathlib import Path
 
-from preservelib.operations import detect_path_cycle, detect_path_cycles_deep, preflight_checks
+from dazzle_preservelib.operations import detect_path_cycle, detect_path_cycles_deep, preflight_checks
 
 
 class TestDetectPathCycle(unittest.TestCase):
@@ -537,7 +537,7 @@ class TestLinkHandlingMode(unittest.TestCase):
 
     def test_from_string_valid_modes(self):
         """from_string should parse all valid modes."""
-        from preservelib.links import LinkHandlingMode
+        from dazzle_preservelib.links import LinkHandlingMode
 
         self.assertEqual(LinkHandlingMode.from_string("block"), LinkHandlingMode.BLOCK)
         self.assertEqual(LinkHandlingMode.from_string("skip"), LinkHandlingMode.SKIP)
@@ -547,7 +547,7 @@ class TestLinkHandlingMode(unittest.TestCase):
 
     def test_from_string_case_insensitive(self):
         """from_string should be case insensitive."""
-        from preservelib.links import LinkHandlingMode
+        from dazzle_preservelib.links import LinkHandlingMode
 
         self.assertEqual(LinkHandlingMode.from_string("BLOCK"), LinkHandlingMode.BLOCK)
         self.assertEqual(LinkHandlingMode.from_string("Skip"), LinkHandlingMode.SKIP)
@@ -555,7 +555,7 @@ class TestLinkHandlingMode(unittest.TestCase):
 
     def test_from_string_invalid_raises(self):
         """from_string should raise ValueError for invalid modes."""
-        from preservelib.links import LinkHandlingMode
+        from dazzle_preservelib.links import LinkHandlingMode
 
         with self.assertRaises(ValueError) as ctx:
             LinkHandlingMode.from_string("invalid")
@@ -569,7 +569,7 @@ class TestLinkInfo(unittest.TestCase):
 
     def test_creates_cycle_with_destination_match(self):
         """creates_cycle_with should return True when target is destination."""
-        from preservelib.links import LinkInfo
+        from dazzle_preservelib.links import LinkInfo
 
         info = LinkInfo(
             link_path=Path("/source/link"),
@@ -579,7 +579,7 @@ class TestLinkInfo(unittest.TestCase):
 
     def test_creates_cycle_with_inside_destination(self):
         """creates_cycle_with should return True when target is inside destination."""
-        from preservelib.links import LinkInfo
+        from dazzle_preservelib.links import LinkInfo
 
         info = LinkInfo(
             link_path=Path("/source/link"),
@@ -589,7 +589,7 @@ class TestLinkInfo(unittest.TestCase):
 
     def test_creates_cycle_with_contains_destination(self):
         """creates_cycle_with should return True when target contains destination."""
-        from preservelib.links import LinkInfo
+        from dazzle_preservelib.links import LinkInfo
 
         info = LinkInfo(
             link_path=Path("/source/link"),
@@ -599,14 +599,14 @@ class TestLinkInfo(unittest.TestCase):
 
     def test_no_cycle(self):
         """creates_cycle_with should return False when no cycle."""
-        from preservelib.links import LinkInfo
+        from dazzle_preservelib.links import LinkInfo
 
         info = LinkInfo(link_path=Path("/source/link"))
         self.assertFalse(info.creates_cycle_with(Path("/dest")))
 
     def test_to_dict_serialization(self):
         """to_dict should serialize all fields correctly."""
-        from preservelib.links import LinkInfo, LinkAction
+        from dazzle_preservelib.links import LinkInfo, LinkAction
 
         info = LinkInfo(
             link_path=Path("/source/link"),
@@ -636,7 +636,7 @@ class TestDecideLinkAction(unittest.TestCase):
 
     def test_block_mode_with_cycle_blocks(self):
         """Block mode should return BLOCK for cycle-creating links."""
-        from preservelib.links import LinkInfo, LinkHandlingMode, LinkAction, decide_link_action
+        from dazzle_preservelib.links import LinkInfo, LinkHandlingMode, LinkAction, decide_link_action
 
         info = LinkInfo(
             link_path=Path("/source/link"),
@@ -647,7 +647,7 @@ class TestDecideLinkAction(unittest.TestCase):
 
     def test_block_mode_without_cycle_follows(self):
         """Block mode should return FOLLOW for non-cycle links."""
-        from preservelib.links import LinkInfo, LinkHandlingMode, LinkAction, decide_link_action
+        from dazzle_preservelib.links import LinkInfo, LinkHandlingMode, LinkAction, decide_link_action
 
         info = LinkInfo(link_path=Path("/source/link"))
         action = decide_link_action(info, LinkHandlingMode.BLOCK, Path("/dest"))
@@ -655,7 +655,7 @@ class TestDecideLinkAction(unittest.TestCase):
 
     def test_skip_mode_always_skips(self):
         """Skip mode should always return SKIP."""
-        from preservelib.links import LinkInfo, LinkHandlingMode, LinkAction, decide_link_action
+        from dazzle_preservelib.links import LinkInfo, LinkHandlingMode, LinkAction, decide_link_action
 
         # Even non-cycle links should be skipped
         info = LinkInfo(link_path=Path("/source/link"))
@@ -664,7 +664,7 @@ class TestDecideLinkAction(unittest.TestCase):
 
     def test_unlink_mode_with_cycle_unlinks(self):
         """Unlink mode should return UNLINK for cycle-creating links."""
-        from preservelib.links import LinkInfo, LinkHandlingMode, LinkAction, decide_link_action
+        from dazzle_preservelib.links import LinkInfo, LinkHandlingMode, LinkAction, decide_link_action
 
         info = LinkInfo(
             link_path=Path("/source/link"),
@@ -675,7 +675,7 @@ class TestDecideLinkAction(unittest.TestCase):
 
     def test_unlink_mode_without_cycle_skips(self):
         """Unlink mode should return SKIP for non-cycle links."""
-        from preservelib.links import LinkInfo, LinkHandlingMode, LinkAction, decide_link_action
+        from dazzle_preservelib.links import LinkInfo, LinkHandlingMode, LinkAction, decide_link_action
 
         info = LinkInfo(link_path=Path("/source/link"))
         action = decide_link_action(info, LinkHandlingMode.UNLINK, Path("/dest"))
@@ -683,7 +683,7 @@ class TestDecideLinkAction(unittest.TestCase):
 
     def test_recreate_mode_not_implemented(self):
         """Recreate mode should raise NotImplementedError."""
-        from preservelib.links import LinkInfo, LinkHandlingMode, decide_link_action
+        from dazzle_preservelib.links import LinkInfo, LinkHandlingMode, decide_link_action
 
         info = LinkInfo(link_path=Path("/source/link"))
         with self.assertRaises(NotImplementedError) as ctx:
@@ -694,7 +694,7 @@ class TestDecideLinkAction(unittest.TestCase):
 
     def test_ask_mode_not_implemented(self):
         """Ask mode should raise NotImplementedError."""
-        from preservelib.links import LinkInfo, LinkHandlingMode, decide_link_action
+        from dazzle_preservelib.links import LinkInfo, LinkHandlingMode, decide_link_action
 
         info = LinkInfo(link_path=Path("/source/link"))
         with self.assertRaises(NotImplementedError) as ctx:
@@ -735,7 +735,7 @@ class TestAnalyzeLink(unittest.TestCase):
     @unittest.skipIf(sys.platform != 'win32', "Junction test requires Windows")
     def test_analyze_junction_to_destination(self):
         """analyze_link should correctly identify junction pointing to destination."""
-        from preservelib.links import analyze_link
+        from dazzle_preservelib.links import analyze_link
 
         link_path = self.src / "link_to_dest"
 
@@ -763,7 +763,7 @@ class TestAnalyzeLink(unittest.TestCase):
     @unittest.skipIf(sys.platform == 'win32', "Symlink test unreliable on Windows without admin")
     def test_analyze_symlink_inside_destination(self):
         """analyze_link should correctly identify symlink pointing inside destination."""
-        from preservelib.links import analyze_link
+        from dazzle_preservelib.links import analyze_link
 
         # Create a subdirectory in destination
         inside_dst = self.dst / "subdir"
@@ -788,7 +788,7 @@ class TestAnalyzeLink(unittest.TestCase):
 
     def test_analyze_broken_link(self):
         """analyze_link should correctly identify broken links."""
-        from preservelib.links import analyze_link
+        from dazzle_preservelib.links import analyze_link
 
         link_path = self.src / "broken_link"
         nonexistent = self.test_dir / "nonexistent"

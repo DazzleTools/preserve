@@ -19,7 +19,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from preserve.preserve import handle_verify_operation
-from preservelib.manifest import PreserveManifest
+from dazzle_preservelib.manifest import PreserveManifest
 
 
 class TestVerifyCliCommand(unittest.TestCase):
@@ -97,7 +97,7 @@ class TestVerifyCliCommand(unittest.TestCase):
         )
 
         # Mock the verification to succeed
-        with patch('preservelib.verification.find_and_verify_manifest') as mock_verify:
+        with patch('dazzle_preservelib.verification.find_and_verify_manifest') as mock_verify:
             # Use SimpleNamespace for manifest to avoid MagicMock directory creation
             manifest = SimpleNamespace(
                 manifest_dir=self.preserved_dir,
@@ -121,7 +121,7 @@ class TestVerifyCliCommand(unittest.TestCase):
         self.assertFalse(any("Three-way" in str(call) for call in print_calls))
 
     @patch('builtins.print')
-    @patch('preservelib.verification.verify_three_way')
+    @patch('dazzle_preservelib.verification.verify_three_way')
     def test_verify_with_src_three_way(self, mock_verify_three_way, mock_print):
         """Test VERIFY with --src performs three-way verification."""
         # Create test files
@@ -214,7 +214,7 @@ class TestVerifyCliCommand(unittest.TestCase):
         # and we can see it in the captured log output
 
     @patch('builtins.print')
-    @patch('preservelib.verification.verify_three_way')
+    @patch('dazzle_preservelib.verification.verify_three_way')
     def test_verify_src_with_modified_files(self, mock_verify_three_way, mock_print):
         """Test VERIFY --src correctly reports modified source files."""
         # Create test files with different content
@@ -269,7 +269,7 @@ class TestVerifyCliCommand(unittest.TestCase):
                            for call in print_calls))
 
     @patch('builtins.print')
-    @patch('preservelib.verification.verify_three_way')
+    @patch('dazzle_preservelib.verification.verify_three_way')
     def test_verify_src_with_corrupted_preserved(self, mock_verify_three_way, mock_print):
         """Test VERIFY --src correctly reports corrupted preserved files."""
         # Create test files
@@ -321,7 +321,7 @@ class TestVerifyCliCommand(unittest.TestCase):
                            for call in print_calls))
 
     @patch('builtins.print')
-    @patch('preservelib.verification.verify_three_way')
+    @patch('dazzle_preservelib.verification.verify_three_way')
     def test_verify_src_complex_difference(self, mock_verify_three_way, mock_print):
         """Test VERIFY --src correctly reports complex differences."""
         # Create test files

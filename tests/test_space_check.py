@@ -16,7 +16,7 @@ from pathlib import Path
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from preservelib.operations import (
+from dazzle_preservelib.operations import (
     calculate_total_size,
     check_disk_space,
     check_write_permission,

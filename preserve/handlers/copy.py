@@ -16,14 +16,14 @@ import sys
 import logging
 from pathlib import Path
 
-from preservelib import operations
-from preservelib.operations import InsufficientSpaceError, PermissionCheckError
-from preservelib.destination import (
+from dazzle_preservelib import operations
+from dazzle_preservelib.operations import InsufficientSpaceError, PermissionCheckError
+from dazzle_preservelib.destination import (
     scan_destination,
     format_scan_report,
     ConflictResolution,
 )
-from preservelib.path_warnings import (
+from dazzle_preservelib.path_warnings import (
     check_path_mode_warnings,
     prompt_path_warning,
 )

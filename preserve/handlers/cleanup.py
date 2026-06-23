@@ -14,8 +14,8 @@ import shutil
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from preservelib.manifest import read_manifest, find_available_manifests, calculate_file_hash
-from preservelib.metadata import collect_file_metadata, apply_file_metadata
+from dazzle_preservelib.manifest import read_manifest, find_available_manifests, calculate_file_hash
+from dazzle_preservelib.metadata import collect_file_metadata, apply_file_metadata
 from preserve.utils import format_bytes_detailed
 
 logger = logging.getLogger(__name__)

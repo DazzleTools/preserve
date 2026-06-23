@@ -13,13 +13,13 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from preservelib.verification import (
+from dazzle_preservelib.verification import (
     VerificationStatus,
     FileVerificationResult,
     ThreeWayVerificationResult,
     verify_three_way
 )
-from preservelib.manifest import PreserveManifest
+from dazzle_preservelib.manifest import PreserveManifest
 
 
 class TestThreeWayVerificationFunction(unittest.TestCase):
@@ -46,7 +46,7 @@ class TestThreeWayVerificationFunction(unittest.TestCase):
         }
         return manifest
 
-    @patch('preservelib.verification.calculate_file_hash')
+    @patch('dazzle_preservelib.verification.calculate_file_hash')
     def test_all_files_match(self, mock_hash):
         """Test when all three versions match."""
         # Create test files
@@ -80,7 +80,7 @@ class TestThreeWayVerificationFunction(unittest.TestCase):
         self.assertEqual(len(result.preserved_corrupted), 0)
         self.assertTrue(result.is_successful)
 
-    @patch('preservelib.verification.calculate_file_hash')
+    @patch('dazzle_preservelib.verification.calculate_file_hash')
     def test_source_modified(self, mock_hash):
         """Test when source file is modified after preservation."""
         # Create test files
@@ -120,7 +120,7 @@ class TestThreeWayVerificationFunction(unittest.TestCase):
         self.assertEqual(len(result.preserved_corrupted), 0)
         self.assertFalse(result.is_successful)
 
-    @patch('preservelib.verification.calculate_file_hash')
+    @patch('dazzle_preservelib.verification.calculate_file_hash')
     def test_preserved_corrupted(self, mock_hash):
         """Test when preserved file is corrupted."""
         # Create test files
@@ -188,7 +188,7 @@ class TestThreeWayVerificationFunction(unittest.TestCase):
         self.assertEqual(len(result.not_found), 1)
         self.assertFalse(result.is_successful)
 
-    @patch('preservelib.verification.calculate_file_hash')
+    @patch('dazzle_preservelib.verification.calculate_file_hash')
     def test_complex_difference(self, mock_hash):
         """Test when all three hashes are different."""
         # Create test files
@@ -228,7 +228,7 @@ class TestThreeWayVerificationFunction(unittest.TestCase):
         error = result.errors[0]
         self.assertIn("Complex difference", error.error_message)
 
-    @patch('preservelib.verification.calculate_file_hash')
+    @patch('dazzle_preservelib.verification.calculate_file_hash')
     def test_multiple_files(self, mock_hash):
         """Test verification with multiple files having different states."""
         # Create test files
@@ -314,7 +314,7 @@ class TestThreeWayVerificationFunction(unittest.TestCase):
         self.assertEqual(len(result.skipped), 1)
         self.assertEqual(result.skipped[0].status, VerificationStatus.SKIPPED)
 
-    @patch('preservelib.verification.calculate_file_hash')
+    @patch('dazzle_preservelib.verification.calculate_file_hash')
     def test_progress_callback(self, mock_hash):
         """Test that progress callback is called correctly."""
         # Create test file

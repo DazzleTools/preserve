@@ -70,7 +70,7 @@ class TestAnalyzeCleanupStatus(unittest.TestCase):
 
     def _create_manifest(self, files, operation_type="MOVE"):
         """Create a test manifest file using PreserveManifest class."""
-        from preservelib.manifest import PreserveManifest
+        from dazzle_preservelib.manifest import PreserveManifest
 
         manifest = PreserveManifest()
 
@@ -230,7 +230,7 @@ class TestCleanupComplete(unittest.TestCase):
 
     def _create_manifest(self, files):
         """Create a test manifest file using PreserveManifest class."""
-        from preservelib.manifest import PreserveManifest
+        from dazzle_preservelib.manifest import PreserveManifest
 
         manifest = PreserveManifest()
 
@@ -291,7 +291,7 @@ class TestCleanupRollback(unittest.TestCase):
 
     def _create_manifest(self, files):
         """Create a test manifest file using PreserveManifest class."""
-        from preservelib.manifest import PreserveManifest
+        from dazzle_preservelib.manifest import PreserveManifest
 
         manifest = PreserveManifest()
 

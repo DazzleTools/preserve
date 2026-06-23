@@ -16,9 +16,9 @@ import sys
 import logging
 from pathlib import Path
 
-from preservelib import operations
-from preservelib import links
-from preservelib.manifest import PreserveManifest, find_available_manifests
+from dazzle_preservelib import operations
+from dazzle_preservelib import links
+from dazzle_preservelib.manifest import PreserveManifest, find_available_manifests
 from preserve.utils import get_hash_algorithms, get_effective_verbosity
 from preserve.output import configure_formatter, VerbosityLevel
 
@@ -215,7 +215,7 @@ def handle_restore_operation(args, logger):
                 source_base = None
 
             if source_base:
-                from preservelib.verification import verify_three_way
+                from dazzle_preservelib.verification import verify_three_way
 
                 verification_result = verify_three_way(
                     source_path=source_base,

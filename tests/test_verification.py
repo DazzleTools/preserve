@@ -14,7 +14,7 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from preservelib.verification import (
+from dazzle_preservelib.verification import (
     VerificationStatus,
     FileVerificationResult,
     VerificationResult,
@@ -24,7 +24,7 @@ from preservelib.verification import (
     verify_files_against_manifest,
     find_and_verify_manifest
 )
-from preservelib.manifest import find_available_manifests
+from dazzle_preservelib.manifest import find_available_manifests
 
 
 class TestVerificationResult(unittest.TestCase):
@@ -217,7 +217,7 @@ class TestFileVerification(unittest.TestCase):
         self.test_file = self.test_dir / "test.txt"
         self.test_file.write_text("Test content")
 
-    @patch('preservelib.verification.calculate_file_hash')
+    @patch('dazzle_preservelib.verification.calculate_file_hash')
     def test_verify_file_success(self, mock_hash):
         """Test successful file verification."""
         mock_hash.return_value = {"SHA256": "abc123"}
@@ -236,7 +236,7 @@ class TestFileVerification(unittest.TestCase):
         self.assertEqual(result.expected_hash, "abc123")
         self.assertEqual(result.actual_hash, "abc123")
 
-    @patch('preservelib.verification.calculate_file_hash')
+    @patch('dazzle_preservelib.verification.calculate_file_hash')
     def test_verify_file_hash_mismatch(self, mock_hash):
         """Test file verification with hash mismatch."""
         mock_hash.return_value = {"SHA256": "xyz789"}
@@ -291,7 +291,7 @@ class TestFileVerification(unittest.TestCase):
             "hash_algorithm": "SHA256"
         }
 
-        with patch('preservelib.verification.calculate_file_hash') as mock_hash:
+        with patch('dazzle_preservelib.verification.calculate_file_hash') as mock_hash:
             mock_hash.return_value = {"SHA256": "abc123"}
 
             result = verify_file_against_manifest(

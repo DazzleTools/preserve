@@ -18,26 +18,26 @@ import logging
 import datetime
 from pathlib import Path
 
-from preservelib import operations
-from preservelib import links
-from preservelib.links import (
+from dazzle_preservelib import operations
+from dazzle_preservelib import links
+from dazzle_preservelib.links import (
     LinkHandlingMode,
     LinkAction,
     analyze_link,
     decide_link_action,
     remove_link,
 )
-from preservelib.operations import (
+from dazzle_preservelib.operations import (
     InsufficientSpaceError,
     PermissionCheckError,
     detect_path_cycles_deep,
 )
-from preservelib.destination import (
+from dazzle_preservelib.destination import (
     scan_destination,
     format_scan_report,
     ConflictResolution,
 )
-from preservelib.path_warnings import (
+from dazzle_preservelib.path_warnings import (
     check_path_mode_warnings,
     prompt_path_warning,
 )
@@ -637,7 +637,7 @@ def handle_move_operation(args, logger):
 
                         # Update manifest with link_result
                         try:
-                            from preservelib.manifest import PreserveManifest
+                            from dazzle_preservelib.manifest import PreserveManifest
                             manifest = PreserveManifest(manifest_path)
                             # Add link_result to the last operation
                             ops = manifest.manifest.get('operations', [])

@@ -26,8 +26,8 @@ def handle_verify_operation(args, logger):
     logger.info("Starting VERIFY operation")
 
     # Import from the verification modules
-    from preservelib.verification import find_and_verify_manifest, verify_three_way
-    from preservelib.manifest import (
+    from dazzle_preservelib.verification import find_and_verify_manifest, verify_three_way
+    from dazzle_preservelib.manifest import (
         find_available_manifests,
         read_manifest,
         extract_source_from_manifest,
@@ -349,7 +349,7 @@ def handle_verify_operation(args, logger):
 
         # Use verify_three_way but only check source vs manifest
         try:
-            from preservelib.verification import verify_source_against_manifest
+            from dazzle_preservelib.verification import verify_source_against_manifest
             result = verify_source_against_manifest(
                 source_path=source_path,
                 manifest=manifest,

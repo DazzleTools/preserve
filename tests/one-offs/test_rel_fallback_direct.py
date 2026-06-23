@@ -18,7 +18,7 @@ project_root = script_dir.parent
 sys.path.insert(0, str(project_root))
 
 # Import the preservelib module
-from preservelib import operations
+from dazzle_preservelib import operations
 
 def setup_test_dirs():
     """Set up test directories with files from diverse locations."""

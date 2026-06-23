@@ -21,7 +21,7 @@ import logging
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from preserve import preserve
-from preservelib import manifest
+from dazzle_preservelib import manifest
 
 
 def create_test_args(**kwargs):

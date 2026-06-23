@@ -15,7 +15,7 @@ import tempfile
 import shutil
 from pathlib import Path
 
-from preservelib.destination import (
+from dazzle_preservelib.destination import (
     scan_destination,
     compare_files,
     compute_destination_path,
@@ -412,7 +412,7 @@ class TestManifestV3Schema(unittest.TestCase):
 
     def test_manifest_id_generation(self):
         """New manifests should have a unique manifest_id."""
-        from preservelib.manifest import PreserveManifest
+        from dazzle_preservelib.manifest import PreserveManifest
 
         manifest1 = PreserveManifest()
         manifest2 = PreserveManifest()
@@ -423,7 +423,7 @@ class TestManifestV3Schema(unittest.TestCase):
 
     def test_parent_ids_default_empty(self):
         """New manifests should have empty parent_ids array."""
-        from preservelib.manifest import PreserveManifest
+        from dazzle_preservelib.manifest import PreserveManifest
 
         manifest = PreserveManifest()
         self.assertEqual(manifest.get_parent_ids(), [])
@@ -431,7 +431,7 @@ class TestManifestV3Schema(unittest.TestCase):
 
     def test_set_single_parent(self):
         """Test setting a single parent manifest."""
-        from preservelib.manifest import PreserveManifest
+        from dazzle_preservelib.manifest import PreserveManifest
 
         manifest = PreserveManifest()
         manifest.set_parent("pm-abc123")
@@ -442,7 +442,7 @@ class TestManifestV3Schema(unittest.TestCase):
 
     def test_add_multiple_parents(self):
         """Test adding multiple parents (merge scenario)."""
-        from preservelib.manifest import PreserveManifest
+        from dazzle_preservelib.manifest import PreserveManifest
 
         manifest = PreserveManifest()
         manifest.add_parent("pm-abc123")
@@ -455,7 +455,7 @@ class TestManifestV3Schema(unittest.TestCase):
 
     def test_lineage_info(self):
         """Test lineage helper fields."""
-        from preservelib.manifest import PreserveManifest
+        from dazzle_preservelib.manifest import PreserveManifest
 
         manifest = PreserveManifest()
         lineage = manifest.get_lineage()
@@ -466,7 +466,7 @@ class TestManifestV3Schema(unittest.TestCase):
 
     def test_manifest_version_is_3(self):
         """New manifests should use version 3."""
-        from preservelib.manifest import PreserveManifest
+        from dazzle_preservelib.manifest import PreserveManifest
 
         manifest = PreserveManifest()
         self.assertEqual(manifest.manifest["manifest_version"], 3)
@@ -475,7 +475,7 @@ class TestManifestV3Schema(unittest.TestCase):
         """Loading v2 manifest should add v3 fields."""
         import tempfile
         import json
-        from preservelib.manifest import PreserveManifest
+        from dazzle_preservelib.manifest import PreserveManifest
 
         # Create a v2-style manifest file
         v2_manifest = {
@@ -508,7 +508,7 @@ class TestIncorporateFile(unittest.TestCase):
 
     def test_incorporate_file_basic(self):
         """Test incorporating a file without copying."""
-        from preservelib.manifest import PreserveManifest
+        from dazzle_preservelib.manifest import PreserveManifest
 
         manifest = PreserveManifest()
 
@@ -528,7 +528,7 @@ class TestIncorporateFile(unittest.TestCase):
 
     def test_incorporate_file_with_lineage(self):
         """Test incorporating a file with lineage info."""
-        from preservelib.manifest import PreserveManifest
+        from dazzle_preservelib.manifest import PreserveManifest
 
         manifest = PreserveManifest()
 
@@ -552,7 +552,7 @@ class TestOperationResultIncorporated(unittest.TestCase):
 
     def test_incorporated_count(self):
         """Test incorporated file counting."""
-        from preservelib.operations import OperationResult
+        from dazzle_preservelib.operations import OperationResult
 
         result = OperationResult("COPY")
         self.assertEqual(result.incorporated_count(), 0)
@@ -565,7 +565,7 @@ class TestOperationResultIncorporated(unittest.TestCase):
 
     def test_incorporated_in_total_count(self):
         """Incorporated files should be included in total count."""
-        from preservelib.operations import OperationResult
+        from dazzle_preservelib.operations import OperationResult
 
         result = OperationResult("COPY")
         result.add_success("src/a.txt", "dst/a.txt", 100)
@@ -579,7 +579,7 @@ class TestOperationResultIncorporated(unittest.TestCase):
 
     def test_get_summary_includes_incorporated(self):
         """Summary should include incorporated counts."""
-        from preservelib.operations import OperationResult
+        from dazzle_preservelib.operations import OperationResult
 
         result = OperationResult("COPY")
         result.add_incorporated("src/file.txt", "dst/file.txt", 500)
@@ -614,7 +614,7 @@ class TestOnConflictSkip(unittest.TestCase):
 
     def test_skip_preserves_destination(self):
         """Skip mode should preserve destination file."""
-        from preservelib.operations import copy_operation
+        from dazzle_preservelib.operations import copy_operation
 
         result = copy_operation(
             source_files=[str(self.src_file)],
@@ -635,7 +635,7 @@ class TestOnConflictSkip(unittest.TestCase):
 
     def test_default_is_skip(self):
         """Default conflict behavior should be skip."""
-        from preservelib.operations import copy_operation
+        from dazzle_preservelib.operations import copy_operation
 
         result = copy_operation(
             source_files=[str(self.src_file)],
@@ -676,7 +676,7 @@ class TestOnConflictOverwrite(unittest.TestCase):
 
     def test_overwrite_replaces_destination(self):
         """Overwrite mode should replace destination file."""
-        from preservelib.operations import copy_operation
+        from dazzle_preservelib.operations import copy_operation
 
         result = copy_operation(
             source_files=[str(self.src_file)],
@@ -697,7 +697,7 @@ class TestOnConflictOverwrite(unittest.TestCase):
 
     def test_legacy_overwrite_flag(self):
         """Legacy --overwrite flag should work like --on-conflict=overwrite."""
-        from preservelib.operations import copy_operation
+        from dazzle_preservelib.operations import copy_operation
 
         result = copy_operation(
             source_files=[str(self.src_file)],
@@ -732,7 +732,7 @@ class TestOnConflictNewer(unittest.TestCase):
     def test_newer_source_overwrites(self):
         """Newer source should overwrite destination."""
         import time
-        from preservelib.operations import copy_operation
+        from dazzle_preservelib.operations import copy_operation
 
         # Create destination first (older)
         dst_file = self.dst / "file.txt"
@@ -763,7 +763,7 @@ class TestOnConflictNewer(unittest.TestCase):
     def test_newer_destination_skips(self):
         """Newer destination should be preserved."""
         import time
-        from preservelib.operations import copy_operation
+        from dazzle_preservelib.operations import copy_operation
 
         # Create source first (older)
         src_file = self.src / "file.txt"
@@ -809,7 +809,7 @@ class TestOnConflictLarger(unittest.TestCase):
 
     def test_larger_source_overwrites(self):
         """Larger source should overwrite destination."""
-        from preservelib.operations import copy_operation
+        from dazzle_preservelib.operations import copy_operation
 
         # Create smaller destination
         dst_file = self.dst / "file.txt"
@@ -835,7 +835,7 @@ class TestOnConflictLarger(unittest.TestCase):
 
     def test_larger_destination_skips(self):
         """Larger destination should be preserved."""
-        from preservelib.operations import copy_operation
+        from dazzle_preservelib.operations import copy_operation
 
         # Create larger destination
         dst_file = self.dst / "file.txt"
@@ -877,7 +877,7 @@ class TestOnConflictRename(unittest.TestCase):
 
     def test_rename_keeps_both(self):
         """Rename mode should keep both files."""
-        from preservelib.operations import copy_operation
+        from dazzle_preservelib.operations import copy_operation
 
         # Create destination file
         dst_file = self.dst / "file.txt"
@@ -911,7 +911,7 @@ class TestOnConflictRename(unittest.TestCase):
 
     def test_rename_increments_counter(self):
         """Rename should increment counter for multiple conflicts."""
-        from preservelib.operations import copy_operation
+        from dazzle_preservelib.operations import copy_operation
 
         # Create destination files
         dst_file = self.dst / "file.txt"
@@ -961,7 +961,7 @@ class TestOnConflictFail(unittest.TestCase):
 
     def test_fail_aborts_on_conflict(self):
         """Fail mode should abort operation on conflict."""
-        from preservelib.operations import copy_operation
+        from dazzle_preservelib.operations import copy_operation
 
         # Create destination file (conflict)
         dst_file = self.dst / "file.txt"
@@ -990,7 +990,7 @@ class TestOnConflictFail(unittest.TestCase):
 
     def test_fail_stops_processing(self):
         """Fail mode should stop processing remaining files."""
-        from preservelib.operations import copy_operation
+        from dazzle_preservelib.operations import copy_operation
 
         # Create first file with conflict
         (self.dst / "a.txt").write_text("original a")

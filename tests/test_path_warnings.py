@@ -13,7 +13,7 @@ import tempfile
 import shutil
 from pathlib import Path
 
-from preservelib.path_warnings import (
+from dazzle_preservelib.path_warnings import (
     normalize_path_for_comparison,
     find_path_overlap,
     detect_abs_path_overlap,

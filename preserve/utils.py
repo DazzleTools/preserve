@@ -15,6 +15,9 @@ import re
 from pathlib import Path
 from typing import Dict, List, Optional, Union, Any, Callable, TextIO
 from preserve.output import VerbosityLevel
+# L3 manifest lifecycle: the sequential-numbering WRITE side lives in the
+# extracted library (dazzle_preservelib); get_manifest_path is a thin args-shim.
+from dazzle_preservelib.manifest import next_manifest_path
 
 # Constants for terminal colors
 COLORS = {
@@ -655,17 +658,18 @@ def matches_exclude_pattern(file_path, patterns):
     return False
 
 
-# Check for dazzlelink availability
+# Check for dazzlelink availability via the preservelib integration module.
+# The integration lives at preservelib.dazzlelink (NOT preserve.dazzlelink --
+# the prior import path here was a typo that caused an ImportError, falling
+# through to an external `dazzlelink` package whose API did not match).
+# preservelib.dazzlelink internally handles installed-vs-bundled dazzlelink
+# detection and exposes is_available() for feature-detection here.
 try:
-    from preserve import dazzlelink as preserve_dazzlelink
+    from dazzle_preservelib import dazzlelink as preserve_dazzlelink
     HAVE_DAZZLELINK = preserve_dazzlelink.is_available()
 except ImportError:
-    try:
-        import dazzlelink as preserve_dazzlelink
-        HAVE_DAZZLELINK = preserve_dazzlelink.is_available()
-    except ImportError:
-        HAVE_DAZZLELINK = False
-        preserve_dazzlelink = None
+    HAVE_DAZZLELINK = False
+    preserve_dazzlelink = None
 
 
 def walk_with_max_depth(path, max_depth=None):
@@ -873,51 +877,21 @@ def get_manifest_path(args, preserve_dir):
 
     # Determine destination directory
     dest = preserve_dir if preserve_dir else Path(args.dst)
-    single_manifest = dest / 'preserve_manifest.json'
+    scan_only = getattr(args, 'scan_only', False)
 
-    # Check if single manifest exists
-    if single_manifest.exists():
-        # Check if we also have numbered manifests
-        numbered = list(dest.glob('preserve_manifest_[0-9][0-9][0-9]*.json'))
-        if not numbered:
-            # This would be the second operation - migrate the single manifest
-            # But only if this isn't a read-only operation like --scan-only
-            scan_only = getattr(args, 'scan_only', False)
-            if scan_only:
-                # Don't migrate during scan-only, just return what would be used
-                return dest / 'preserve_manifest_002.json'
+    # Preserve the user-facing migration message (a CLI concern): detect the
+    # second-operation migration before delegating. next_manifest_path performs
+    # the rename + logs it; the CLI is what prints to the user.
+    if not scan_only:
+        single_manifest = dest / 'preserve_manifest.json'
+        if single_manifest.exists() and not list(
+            dest.glob('preserve_manifest_[0-9][0-9][0-9]*.json')
+        ):
+            print(f"Migrating {single_manifest.name} to preserve_manifest_001.json")
 
-            new_001 = dest / 'preserve_manifest_001.json'
-            print(f"Migrating {single_manifest.name} to {new_001.name}")
-            try:
-                single_manifest.rename(new_001)
-                logger.info(f"Migrated existing manifest to {new_001.name}")
-            except Exception as e:
-                logger.error(f"Failed to migrate manifest: {e}")
-                # Fall back to creating _002 anyway
-            return dest / 'preserve_manifest_002.json'
-
-    # Look for existing numbered manifests
-    pattern = re.compile(r'preserve_manifest_(\d{3})(?:__.*)?\.json')
-    existing_numbers = []
-
-    for file in dest.glob('preserve_manifest_*.json'):
-        match = pattern.match(file.name)
-        if match:
-            existing_numbers.append(int(match.group(1)))
-
-    # If no manifests exist at all, create the simple one
-    if not existing_numbers and not single_manifest.exists():
-        return single_manifest
-
-    # Find the next sequential number
-    if existing_numbers:
-        next_num = max(existing_numbers) + 1
-        return dest / f'preserve_manifest_{next_num:03d}.json'
-
-    # Edge case: single manifest exists but couldn't be migrated
-    # and no numbered manifests exist
-    return dest / 'preserve_manifest_002.json'
+    # Delegate the sequential-numbering + migration to L3. scan_only callers
+    # predict the path without mutating disk (migrate=False).
+    return next_manifest_path(dest, migrate=not scan_only)
 
 
 def get_dazzlelink_dir(args, preserve_dir):
